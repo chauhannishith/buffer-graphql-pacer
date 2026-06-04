@@ -20,3 +20,6 @@ export {
 
 export { JobQueue } from './queue/job-queue'
 export { TokenBucket, type TokenBucketOptions } from './queue/token-bucket'
+
+export { createBufferedFetch, type BufferedFetchOptions } from './adapters/fetch'
+export { createGraphqlRequestFetch } from './adapters/graphql-request'
