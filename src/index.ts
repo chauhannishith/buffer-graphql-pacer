@@ -1,6 +1,15 @@
 /**
  * Buffer GraphQL rate-limit pacing proxy.
- * Implementation lands in follow-up PRs; this entry point stabilizes the package layout.
  */
 
 export const PACKAGE_NAME = 'buffer-graphql-pacer' as const
+
+export {
+  BUFFER_RATE_LIMIT_DEFAULTS,
+  BufferRateLimiter,
+  type BufferRateLimiterOptions,
+  type BufferRateLimiterState,
+} from './limiter'
+
+export { JobQueue } from './queue/job-queue'
+export { TokenBucket, type TokenBucketOptions } from './queue/token-bucket'
