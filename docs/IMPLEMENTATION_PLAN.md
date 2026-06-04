@@ -6,12 +6,12 @@ A production-grade, open-source **batching and pacing layer** for Buffer’s Gra
 
 ## 1. Problem Statement
 
-| Constraint | Value |
-|------------|--------|
-| Window | Rolling **15 minutes** per client application |
-| Cap | **100 requests** per window |
-| Steady-state pace | ~**6.67 requests/minute** (100 ÷ 15) |
-| Over-limit response | **HTTP 429** + JSON `retryAfter` (seconds) |
+| Constraint                    | Value                                                             |
+| ----------------------------- | ----------------------------------------------------------------- |
+| Window                        | Rolling **15 minutes** per client application                     |
+| Cap                           | **100 requests** per window                                       |
+| Steady-state pace             | ~**6.67 requests/minute** (100 ÷ 15)                              |
+| Over-limit response           | **HTTP 429** + JSON `retryAfter` (seconds)                        |
 | Response headers (every call) | `RateLimit-Limit`, `RateLimit-Remaining`, `RateLimit-Reset` (UTC) |
 
 **Failure mode today:** Bulk schedulers (agencies, AI content pipelines, cron jobs) fire dozens or hundreds of mutations in seconds. Request #101 triggers 429; partial writes leave schedules and local DB out of sync. Fixed `sleep()` does not work on a **rolling** window—you must pace using headers and reset times.
@@ -42,18 +42,18 @@ A production-grade, open-source **batching and pacing layer** for Buffer’s Gra
 
 ## 3. Recommended Tech Stack
 
-| Layer | Choice | Rationale |
-|-------|--------|-----------|
-| Language | **TypeScript** (strict) | Standard for OSS middleware; matches Buffer’s JS/Node audience |
-| Runtime | **Node.js 20+** | LTS, native `fetch`, stable test tooling |
-| Package manager | **pnpm** (or npm) | Fast workspaces if we add `examples/` later |
-| Build | **tsup** or **unbuild** | ESM + CJS dual publish for libraries |
-| Test | **Vitest** | Fast unit tests, fake timers for pacing |
-| HTTP mocking | **MSW** (primary) | Simulates Buffer headers + 429 with `retryAfter: 5` so suites finish in seconds, not 15 minutes |
-| Lint/format | **ESLint + Prettier** | Expected in OSS repos |
-| CI | **GitHub Actions** | Test on PR; publish on tag |
-| Docs site (optional v1.1) | **VitePress** or README-only | README-first for week 1 |
-| Registry | **npm** (`@scope/buffer-rate-limit` or `buffer-graphql-pacer`) | Discoverability |
+| Layer                     | Choice                                                         | Rationale                                                                                       |
+| ------------------------- | -------------------------------------------------------------- | ----------------------------------------------------------------------------------------------- |
+| Language                  | **TypeScript** (strict)                                        | Standard for OSS middleware; matches Buffer’s JS/Node audience                                  |
+| Runtime                   | **Node.js 20+**                                                | LTS, native `fetch`, stable test tooling                                                        |
+| Package manager           | **pnpm** (or npm)                                              | Fast workspaces if we add `examples/` later                                                     |
+| Build                     | **tsup** or **unbuild**                                        | ESM + CJS dual publish for libraries                                                            |
+| Test                      | **Vitest**                                                     | Fast unit tests, fake timers for pacing                                                         |
+| HTTP mocking              | **MSW** (primary)                                              | Simulates Buffer headers + 429 with `retryAfter: 5` so suites finish in seconds, not 15 minutes |
+| Lint/format               | **ESLint + Prettier**                                          | Expected in OSS repos                                                                           |
+| CI                        | **GitHub Actions**                                             | Test on PR; publish on tag                                                                      |
+| Docs site (optional v1.1) | **VitePress** or README-only                                   | README-first for week 1                                                                         |
+| Registry                  | **npm** (`@scope/buffer-rate-limit` or `buffer-graphql-pacer`) | Discoverability                                                                                 |
 
 **Integration surfaces (implement in this order):**
 
@@ -152,8 +152,8 @@ buffer-api-limit/
 const limiter = new BufferRateLimiter({
   maxRequestsPerWindow: 100,
   windowMs: 15 * 60 * 1000,
-  safetyMargin: 0.9,           // target 90 req / 15 min to leave headroom
-  concurrency: 1,              // v1: single flight avoids header races
+  safetyMargin: 0.9, // target 90 req / 15 min to leave headroom
+  concurrency: 1, // v1: single flight avoids header races
 })
 
 await limiter.schedule(() => fetch(bufferUrl, { method: 'POST', body }))
@@ -214,10 +214,10 @@ Rolling window: the **oldest** request in the window falls off continuously. The
 
 Buffer-style scoring (from README; validate against current docs when implementing):
 
-| Rule | Points |
-|------|--------|
-| Scalar field | 1 |
-| Object field | 2 |
+| Rule         | Points                    |
+| ------------ | ------------------------- |
+| Scalar field | 1                         |
+| Object field | 2                         |
 | Nested depth | ×1.5 multiplier per level |
 
 **Implementation options:**
@@ -231,12 +231,12 @@ Buffer-style scoring (from README; validate against current docs when implementi
 
 ## 9. Retry and Backoff (Day 4)
 
-| Scenario | Behavior |
-|----------|----------|
-| HTTP 429 | Parse `retryAfter`, set global `pausedUntil`, reject or re-queue in-flight with same idempotency key docs |
-| Network error | Exponential backoff with jitter, max 3 retries, does not consume rate tokens until sent |
-| 4xx (non-429) | Fail fast, do not retry |
-| 5xx | Limited retries, respect pause state |
+| Scenario      | Behavior                                                                                                  |
+| ------------- | --------------------------------------------------------------------------------------------------------- |
+| HTTP 429      | Parse `retryAfter`, set global `pausedUntil`, reject or re-queue in-flight with same idempotency key docs |
+| Network error | Exponential backoff with jitter, max 3 retries, does not consume rate tokens until sent                   |
+| 4xx (non-429) | Fail fast, do not retry                                                                                   |
+| 5xx           | Limited retries, respect pause state                                                                      |
 
 **Queue freeze:** While paused, drain loop idle; new jobs still enqueue (backpressure: optional `maxQueueSize`).
 
@@ -287,10 +287,10 @@ flowchart TB
 
 **Simulated Buffer behavior:**
 
-| Call # | Response |
-|--------|----------|
-| 1–100 | `200` + headers `RateLimit-Limit: 100`, decrementing `RateLimit-Remaining`, `RateLimit-Reset` (UTC ~15 min ahead, or compressed with fake timers) |
-| 101+ | `429` + body `{ "retryAfter": 5 }` (use **5 seconds** in mocks, not 15 minutes) |
+| Call # | Response                                                                                                                                          |
+| ------ | ------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1–100  | `200` + headers `RateLimit-Limit: 100`, decrementing `RateLimit-Remaining`, `RateLimit-Reset` (UTC ~15 min ahead, or compressed with fake timers) |
+| 101+   | `429` + body `{ "retryAfter": 5 }` (use **5 seconds** in mocks, not 15 minutes)                                                                   |
 
 **What this proves in under 10 seconds:**
 
@@ -301,13 +301,13 @@ flowchart TB
 
 **Unit tests (Vitest):**
 
-| Test | Purpose |
-|------|---------|
-| Token bucket math | Refill, burst, safety margin |
-| Header sync | MSW decrements `Remaining`; drain slows |
-| pacing-429 | Mock 429 + `retryAfter: 5` + `vi.advanceTimersByTime` |
-| burst-500 | 500 enqueued; paced vs unpaced comparison |
-| Adapter contract | `createBufferedFetch` forwards method/body/headers |
+| Test              | Purpose                                               |
+| ----------------- | ----------------------------------------------------- |
+| Token bucket math | Refill, burst, safety margin                          |
+| Header sync       | MSW decrements `Remaining`; drain slows               |
+| pacing-429        | Mock 429 + `retryAfter: 5` + `vi.advanceTimersByTime` |
+| burst-500         | 500 enqueued; paced vs unpaced comparison             |
+| Adapter contract  | `createBufferedFetch` forwards method/body/headers    |
 
 **CI policy:** `pnpm test` runs **mock tier only**. No network, no secrets.
 
@@ -352,12 +352,12 @@ query GetOrgMetaData {
 
 Buffer splits content into two buckets:
 
-| Bucket | API surface | Risk for soak tests |
-|--------|-------------|---------------------|
-| **Posts / Drafts** | Tied to live channels (LinkedIn, etc.) | **High** — pollutes real queues |
-| **Ideas** | `createIdea` — internal org scratchpad | **Low** — never publishes until a human promotes |
+| Bucket             | API surface                            | Risk for soak tests                              |
+| ------------------ | -------------------------------------- | ------------------------------------------------ |
+| **Posts / Drafts** | Tied to live channels (LinkedIn, etc.) | **High** — pollutes real queues                  |
+| **Ideas**          | `createIdea` — internal org scratchpad | **Low** — never publishes until a human promotes |
 
-The rolling limit applies to **any** call to `api.buffer.com`, so you *can* fire ~120 rapid `createIdea` mutations to trigger a real 429 and capture headers—without touching live social accounts.
+The rolling limit applies to **any** call to `api.buffer.com`, so you _can_ fire ~120 rapid `createIdea` mutations to trigger a real 429 and capture headers—without touching live social accounts.
 
 **Script:** `examples/flood-ideas.ts` (manual only, documented cleanup)
 
@@ -374,12 +374,12 @@ Use when you need to demonstrate end-to-end mutation pacing on video or in a Buf
 
 ### Test commands (target `package.json` scripts)
 
-| Script | Tier | When |
-|--------|------|------|
-| `pnpm test` | MSW + Vitest | Every commit / CI |
-| `pnpm test:live:readonly` | Real `getOrganizations` | Manual pre-release |
-| `pnpm test:live:ideas` | Real `createIdea` | Optional; real 429 + mutation path |
-| `pnpm example:paced` | MSW or live (flag) | README hero demo |
+| Script                    | Tier                    | When                               |
+| ------------------------- | ----------------------- | ---------------------------------- |
+| `pnpm test`               | MSW + Vitest            | Every commit / CI                  |
+| `pnpm test:live:readonly` | Real `getOrganizations` | Manual pre-release                 |
+| `pnpm test:live:ideas`    | Real `createIdea`       | Optional; real 429 + mutation path |
+| `pnpm example:paced`      | MSW or live (flag)      | README hero demo                   |
 
 ---
 
@@ -400,17 +400,17 @@ Record **fixture snapshots** (redacted headers JSON) from one Tier 2 run into `t
 
 Aligned with README (~15–20 hours / 5–7 days). Adjust if complexity analyzer is deferred to v1.1.
 
-| Phase | Days | Deliverable | Exit criteria |
-|-------|------|-------------|---------------|
-| **0. Scaffold** | 0.5 | Repo, TS, Vitest, CI, MIT LICENSE | `pnpm test` green |
-| **1. Queue + bucket** | 1–2 | `BufferRateLimiter`, job queue, drain loop | 100 jobs complete in mock without 429 |
-| **2. Headers** | 0.5 | Parse/sync `RateLimit-*` | Pace tightens when remaining low |
-| **3. 429 backoff** | 1 | Pause/resume from body + headers | Recovery test passes |
-| **4. Complexity** | 1 | AST estimator + optional gate | Unit tests for sample queries |
-| **5. Tests** | 1 | MSW mock + burst-500 + pacing-429; `flood-readonly` script | CI &lt;10s; live script documented |
-| **6. Adapters** | 1 | fetch + graphql-request + Apollo link | `bulk-schedule-paced` runs on MSW |
-| **7. Docs + polish** | 1–2 | README testing pyramid, API reference | npm publish-ready |
-| **8. Portfolio** | 0.5 | Demo GIF (paced vs unpaced readonly flood), blog outline | Shareable link |
+| Phase                 | Days | Deliverable                                                | Exit criteria                         |
+| --------------------- | ---- | ---------------------------------------------------------- | ------------------------------------- |
+| **0. Scaffold**       | 0.5  | Repo, TS, Vitest, CI, MIT LICENSE                          | `pnpm test` green                     |
+| **1. Queue + bucket** | 1–2  | `BufferRateLimiter`, job queue, drain loop                 | 100 jobs complete in mock without 429 |
+| **2. Headers**        | 0.5  | Parse/sync `RateLimit-*`                                   | Pace tightens when remaining low      |
+| **3. 429 backoff**    | 1    | Pause/resume from body + headers                           | Recovery test passes                  |
+| **4. Complexity**     | 1    | AST estimator + optional gate                              | Unit tests for sample queries         |
+| **5. Tests**          | 1    | MSW mock + burst-500 + pacing-429; `flood-readonly` script | CI &lt;10s; live script documented    |
+| **6. Adapters**       | 1    | fetch + graphql-request + Apollo link                      | `bulk-schedule-paced` runs on MSW     |
+| **7. Docs + polish**  | 1–2  | README testing pyramid, API reference                      | npm publish-ready                     |
+| **8. Portfolio**      | 0.5  | Demo GIF (paced vs unpaced readonly flood), blog outline   | Shareable link                        |
 
 **Suggested git commit sequence (for portfolio clarity):**
 
@@ -428,13 +428,13 @@ Aligned with README (~15–20 hours / 5–7 days). Adjust if complexity analyzer
 
 ## 12. Real-World Use Cases
 
-| User | Scenario | How they use the library |
-|------|----------|---------------------------|
-| **Agency** | Monday batch: 50 clients × 7 days of posts | Wrap existing Node scheduler; all mutations go through `limiter.schedule` |
-| **AI content pipeline** | LLM outputs 200 captions → Buffer create mutations | Single process queue; logs `getState()` to Datadog |
-| **SaaS integrator** | Multi-tenant app, one Buffer OAuth app | One limiter **per Buffer client_id** (document singleton pattern) |
-| **Cron job** | Nightly sync | Process starts, drains queue, exits when empty |
-| **Local dev** | Script testing | MSW mock by default; live readonly only when `RUN_LIVE_TESTS=1` |
+| User                    | Scenario                                           | How they use the library                                                  |
+| ----------------------- | -------------------------------------------------- | ------------------------------------------------------------------------- |
+| **Agency**              | Monday batch: 50 clients × 7 days of posts         | Wrap existing Node scheduler; all mutations go through `limiter.schedule` |
+| **AI content pipeline** | LLM outputs 200 captions → Buffer create mutations | Single process queue; logs `getState()` to Datadog                        |
+| **SaaS integrator**     | Multi-tenant app, one Buffer OAuth app             | One limiter **per Buffer client_id** (document singleton pattern)         |
+| **Cron job**            | Nightly sync                                       | Process starts, drains queue, exits when empty                            |
+| **Local dev**           | Script testing                                     | MSW mock by default; live readonly only when `RUN_LIVE_TESTS=1`           |
 
 **Operational practices:**
 
@@ -507,12 +507,12 @@ What reviewers (including Buffer engineers) should see in 30 seconds:
 
 **Suggested showcase assets:**
 
-| Asset | Purpose |
-|-------|---------|
-| GitHub repo with green CI badge | Trust |
-| 2-min screen recording | MSW: 200 jobs queued with depth meter; optional clip: Tier 2 readonly flood (unpaced 429 vs paced recovery) |
-| Short blog post / dev.to | “Building a token bucket for Buffer’s rolling rate limit” |
-| Link in resume / cover letter | “OSS: pacing proxy for Buffer GraphQL — prevents 429 bulk failures” |
+| Asset                           | Purpose                                                                                                     |
+| ------------------------------- | ----------------------------------------------------------------------------------------------------------- |
+| GitHub repo with green CI badge | Trust                                                                                                       |
+| 2-min screen recording          | MSW: 200 jobs queued with depth meter; optional clip: Tier 2 readonly flood (unpaced 429 vs paced recovery) |
+| Short blog post / dev.to        | “Building a token bucket for Buffer’s rolling rate limit”                                                   |
+| Link in resume / cover letter   | “OSS: pacing proxy for Buffer GraphQL — prevents 429 bulk failures”                                         |
 
 **Talking points in interviews:**
 
@@ -530,15 +530,15 @@ What reviewers (including Buffer engineers) should see in 30 seconds:
 
 ## 15. Risks and Mitigations
 
-| Risk | Mitigation |
-|------|------------|
+| Risk                                  | Mitigation                                                                  |
+| ------------------------------------- | --------------------------------------------------------------------------- |
 | Buffer changes header names or limits | Version config; integration test against recorded fixtures; changelog watch |
-| Complexity rules differ from server | Document estimator as conservative; never claim exact parity |
-| Multi-process apps double traffic | Document one limiter per app; v2 Redis adapter |
-| Memory growth on huge queues | `maxQueueSize` + backpressure error |
-| Library hides 429 from caller | Emit events; optional `throwOn429` for strict callers |
-| Live soak tests exhaust 15-min window | Tier 2/3 manual only; MSW uses `retryAfter: 5`; document reset wait |
-| Accidental post floods in tests | Document Ideas vs Posts; default examples use readonly queries |
+| Complexity rules differ from server   | Document estimator as conservative; never claim exact parity                |
+| Multi-process apps double traffic     | Document one limiter per app; v2 Redis adapter                              |
+| Memory growth on huge queues          | `maxQueueSize` + backpressure error                                         |
+| Library hides 429 from caller         | Emit events; optional `throwOn429` for strict callers                       |
+| Live soak tests exhaust 15-min window | Tier 2/3 manual only; MSW uses `retryAfter: 5`; document reset wait         |
+| Accidental post floods in tests       | Document Ideas vs Posts; default examples use readonly queries              |
 
 ---
 
