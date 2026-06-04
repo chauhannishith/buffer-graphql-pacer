@@ -10,7 +10,7 @@ pnpm test
 pnpm build
 ```
 
-Requires **Node.js 20+** (see `.nvmrc`).
+Requires **Node.js 24+** for local dev and CI (see `.nvmrc`). The package supports **Node.js 20+** via `engines`.
 
 ## Commit conventions
 
