@@ -1,6 +1,13 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { BUFFER_RATE_LIMIT_DEFAULTS, BufferRateLimiter } from '../src/limiter'
 
+const rateLimitHeaders = (remaining: string, reset = '2026-06-04T12:15:00.000Z') =>
+  new Headers({
+    'RateLimit-Limit': '100',
+    'RateLimit-Remaining': remaining,
+    'RateLimit-Reset': reset,
+  })
+
 describe('BufferRateLimiter', () => {
   beforeEach(() => {
     vi.useFakeTimers()
@@ -75,5 +82,72 @@ describe('BufferRateLimiter', () => {
     await vi.waitFor(() => {
       expect(limiter.getState().queueDepth).toBe(0)
     })
+  })
+
+  it('syncs state from Response rate limit headers', async () => {
+    const limiter = new BufferRateLimiter()
+
+    await limiter.schedule(async () => {
+      return new Response(null, { status: 200, headers: rateLimitHeaders('7') })
+    })
+
+    const state = limiter.getState()
+    expect(state.rateLimitRemaining).toBe(7)
+    expect(state.rateLimitResetAt).toBe(Date.parse('2026-06-04T12:15:00.000Z'))
+  })
+
+  it('pauses and retries after HTTP 429 with retryAfter', async () => {
+    const limiter = new BufferRateLimiter({ defaultRetryAfterSeconds: 60 })
+    let attempts = 0
+
+    const resultPromise = limiter.schedule(async () => {
+      attempts += 1
+      if (attempts === 1) {
+        return new Response(JSON.stringify({ retryAfter: 5 }), {
+          status: 429,
+          headers: { 'Content-Type': 'application/json' },
+        })
+      }
+      return new Response(null, { status: 200, headers: rateLimitHeaders('50') })
+    })
+
+    await vi.advanceTimersByTimeAsync(0)
+    expect(attempts).toBe(1)
+    expect(limiter.getState().pausedUntil).not.toBeNull()
+
+    await vi.advanceTimersByTimeAsync(5_000)
+    const result = await resultPromise
+
+    expect(attempts).toBe(2)
+    expect(result.status).toBe(200)
+    expect(limiter.getState().pausedUntil).toBeNull()
+    expect(limiter.getState().rateLimitRemaining).toBe(50)
+  })
+
+  it('applies header-driven delay when remaining is at low watermark', async () => {
+    const limiter = new BufferRateLimiter({
+      maxRequests: 100,
+      windowMs: 60_000,
+      safetyMargin: 1,
+      lowWatermark: 5,
+    })
+
+    await limiter.schedule(async () => {
+      return new Response(null, {
+        status: 200,
+        headers: rateLimitHeaders('2', '2026-01-01T00:01:00.000Z'),
+      })
+    })
+
+    const timestamps: number[] = []
+    const second = limiter.schedule(async () => {
+      timestamps.push(Date.now())
+      return new Response(null, { status: 200, headers: rateLimitHeaders('1') })
+    })
+
+    await vi.advanceTimersByTimeAsync(30_000)
+    await second
+
+    expect(timestamps[0]).toBeGreaterThanOrEqual(30_000)
   })
 })
