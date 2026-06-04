@@ -45,7 +45,9 @@
     "lint": "eslint .",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
-    "example:paced": "tsx examples/bulk-schedule-paced.ts"
+    "example:paced": "tsx examples/bulk-schedule-paced.ts",
+    "example:live:readonly": "tsx examples/flood-readonly.ts",
+    "example:live:ideas": "tsx examples/flood-ideas.ts"
   },
   "keywords": [
     "buffer",

@@ -1,7 +1,10 @@
 /**
- * Demo: burst GraphQL calls through the paced fetch adapter (MSW in tests, or set BUFFER_GRAPHQL_URL).
+ * Demo: burst GraphQL calls through the paced fetch adapter.
  *
  * Run: pnpm example:paced
+ *
+ * Uses BUFFER_GRAPHQL_URL when set (real API). For a guarded live flood test, use:
+ *   RUN_LIVE_TESTS=1 pnpm example:live:readonly
  */
 import { BufferRateLimiter, createBufferedFetch } from '../src/index'
 
