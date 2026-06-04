@@ -21,6 +21,16 @@
         "types": "./dist/index.d.cts",
         "default": "./dist/index.cjs"
       }
+    },
+    "./apollo": {
+      "import": {
+        "types": "./dist/apollo.d.ts",
+        "default": "./dist/apollo.js"
+      },
+      "require": {
+        "types": "./dist/apollo.d.cts",
+        "default": "./dist/apollo.cjs"
+      }
     }
   },
   "files": [
@@ -34,7 +44,8 @@
     "test:watch": "vitest",
     "lint": "eslint .",
     "format": "prettier --write .",
-    "format:check": "prettier --check ."
+    "format:check": "prettier --check .",
+    "example:paced": "tsx examples/bulk-schedule-paced.ts"
   },
   "keywords": [
     "buffer",
@@ -47,13 +58,29 @@
     "type": "git",
     "url": "https://github.com/chauhannishith/buffer-api-limit.git"
   },
+  "peerDependencies": {
+    "@apollo/client": "^3.8.0",
+    "graphql-request": "^6.0.0 || ^7.0.0"
+  },
+  "peerDependenciesMeta": {
+    "@apollo/client": {
+      "optional": true
+    },
+    "graphql-request": {
+      "optional": true
+    }
+  },
   "devDependencies": {
+    "@apollo/client": "3.13.8",
     "@eslint/js": "^9.28.0",
     "@types/node": "^22.15.21",
     "eslint": "^9.28.0",
+    "graphql": "16.11.0",
+    "graphql-request": "7.1.2",
     "msw": "2.10.2",
     "prettier": "^3.5.3",
     "tsup": "^8.5.0",
+    "tsx": "4.19.4",
     "typescript": "^5.8.3",
     "typescript-eslint": "^8.33.0",
     "vitest": "^3.2.1"
