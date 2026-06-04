@@ -1,8 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { parseRateLimitHeaders, RateLimitHeaderTracker } from '../src/headers/rate-limit-state'
 
-const makeHeaders = (values: Record<string, string>): Headers =>
-  new Headers(values)
+const makeHeaders = (values: Record<string, string>): Headers => new Headers(values)
 
 describe('parseRateLimitHeaders', () => {
   it('parses valid Buffer rate limit headers', () => {
