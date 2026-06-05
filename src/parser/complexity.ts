@@ -10,7 +10,11 @@ const DEFAULT_SCALAR_POINTS = 1
 const DEFAULT_OBJECT_POINTS = 2
 const DEFAULT_DEPTH_MULTIPLIER = 1.5
 
-const fieldPoints = (field: FieldNode, depth: number, options: ComplexityEstimatorOptions): number => {
+const fieldPoints = (
+  field: FieldNode,
+  depth: number,
+  options: ComplexityEstimatorOptions,
+): number => {
   const scalarPoints = options.scalarPoints ?? DEFAULT_SCALAR_POINTS
   const objectPoints = options.objectPoints ?? DEFAULT_OBJECT_POINTS
   const depthMultiplier = options.depthMultiplier ?? DEFAULT_DEPTH_MULTIPLIER
@@ -45,10 +49,7 @@ export const estimateQueryComplexity = (
       }
     }
 
-    walk(
-      definition.selectionSet.selections.filter(isFieldNode),
-      0,
-    )
+    walk(definition.selectionSet.selections.filter(isFieldNode), 0)
   }
 
   return Math.ceil(total)

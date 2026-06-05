@@ -105,7 +105,7 @@ import { BufferPacingLink } from 'buffer-graphql-pacer/apollo'
 | `createGraphqlRequestFetch` | `GraphQLClient` `fetch` option                                                              |
 | `BufferPacingLink`          | Apollo link (`buffer-graphql-pacer/apollo`)                                                 |
 | `getState()`                | `queueDepth`, tokens, `pausedUntil`, `rateLimitRemaining`, `requestBuckets`, `pacingStatus` |
-| `estimateQueryComplexity`   | AST-based Buffer-style complexity score for a query string                                    |
+| `estimateQueryComplexity`   | AST-based Buffer-style complexity score for a query string                                  |
 
 Defaults match Buffer’s documented limit: **100 requests / 15 minutes**, **0.9 safety margin**.
 
