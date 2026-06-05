@@ -44,6 +44,8 @@
   ],
   "scripts": {
     "build": "tsup",
+    "prepare": "npm run build",
+    "prepack": "npm run build",
     "dev": "tsup --watch",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "vitest run",
