@@ -1,7 +1,9 @@
 import { parseRetryAfterSeconds, PauseGate } from './backoff/retry-429'
 import { RateLimitHeaderTracker } from './headers/rate-limit-state'
+import type { RateLimitSnapshot } from './headers/rate-limit-state'
 import { JobQueue } from './queue/job-queue'
 import { TokenBucket } from './queue/token-bucket'
+import { RequestMetrics } from './telemetry/request-metrics'
 
 /** Buffer GraphQL defaults: 100 requests per 15-minute rolling window. */
 export const BUFFER_RATE_LIMIT_DEFAULTS = {
@@ -12,6 +14,16 @@ export const BUFFER_RATE_LIMIT_DEFAULTS = {
   defaultRetryAfterSeconds: 60,
 } as const
 
+export type PacingStatus = 'stable' | 'throttled' | 'paused'
+
+export type BufferRateLimiterCallbacks = {
+  onRequestStart?: () => void
+  onRequestComplete?: (info: { completedAt: number }) => void
+  onRateLimitHeaders?: (snapshot: RateLimitSnapshot) => void
+  onPause?: (info: { pausedUntil: number; retryAfterSeconds: number }) => void
+  onResume?: () => void
+}
+
 export type BufferRateLimiterOptions = {
   maxRequests?: number
   windowMs?: number
@@ -20,6 +32,7 @@ export type BufferRateLimiterOptions = {
   lowWatermark?: number
   /** Used when a 429 response has no parseable retryAfter value. */
   defaultRetryAfterSeconds?: number
+  callbacks?: BufferRateLimiterCallbacks
 }
 
 export type BufferRateLimiterState = {
@@ -29,6 +42,14 @@ export type BufferRateLimiterState = {
   pausedUntil: number | null
   rateLimitRemaining: number | null
   rateLimitResetAt: number | null
+  rateLimitLimit: number | null
+  totalScheduled: number
+  totalCompleted: number
+  inFlight: boolean
+  requestsPerMinute: number
+  pacingStatus: PacingStatus
+  /** Rolling per-second buckets for terminal sparklines (oldest first). */
+  requestBuckets: number[]
 }
 
 const delay = (ms: number): Promise<void> =>
@@ -52,7 +73,14 @@ export class BufferRateLimiter {
   private readonly queue = new JobQueue()
   private readonly headerTracker: RateLimitHeaderTracker
   private readonly pauseGate = new PauseGate()
+  private readonly metrics = new RequestMetrics()
+  private readonly callbacks: BufferRateLimiterCallbacks
+  private readonly lowWatermark: number
   private readonly defaultRetryAfterSeconds: number
+
+  private totalScheduled = 0
+  private totalCompleted = 0
+  private inFlight = false
 
   constructor(options: BufferRateLimiterOptions = {}) {
     this.bucket = new TokenBucket({
@@ -60,11 +88,11 @@ export class BufferRateLimiter {
       windowMs: options.windowMs ?? BUFFER_RATE_LIMIT_DEFAULTS.windowMs,
       safetyMargin: options.safetyMargin ?? BUFFER_RATE_LIMIT_DEFAULTS.safetyMargin,
     })
-    this.headerTracker = new RateLimitHeaderTracker(
-      options.lowWatermark ?? BUFFER_RATE_LIMIT_DEFAULTS.lowWatermark,
-    )
+    this.lowWatermark = options.lowWatermark ?? BUFFER_RATE_LIMIT_DEFAULTS.lowWatermark
+    this.headerTracker = new RateLimitHeaderTracker(this.lowWatermark)
     this.defaultRetryAfterSeconds =
       options.defaultRetryAfterSeconds ?? BUFFER_RATE_LIMIT_DEFAULTS.defaultRetryAfterSeconds
+    this.callbacks = options.callbacks ?? {}
   }
 
   /**
@@ -76,6 +104,7 @@ export class BufferRateLimiter {
    * - pauses and retries after HTTP 429 using `retryAfter`
    */
   schedule<T>(fn: () => Promise<T>): Promise<T> {
+    this.totalScheduled += 1
     return this.queue.enqueue(() => this.runWithRateControl(fn))
   }
 
@@ -86,24 +115,63 @@ export class BufferRateLimiter {
     if (response.status === 429) {
       return
     }
-    this.headerTracker.update(response.headers)
+    this.syncHeaders(response.headers)
   }
 
   getState(): BufferRateLimiterState {
     const snapshot = this.headerTracker.getSnapshot()
+    const now = Date.now()
+    const pausedUntil = this.pauseGate.getPausedUntil(now)
+
     return {
       queueDepth: this.queue.getDepth(),
       availableTokens: this.bucket.getAvailableTokens(),
       tokenCapacity: this.bucket.getCapacity(),
-      pausedUntil: this.pauseGate.getPausedUntil(),
+      pausedUntil,
       rateLimitRemaining: snapshot?.remaining ?? null,
       rateLimitResetAt: snapshot?.resetAt.getTime() ?? null,
+      rateLimitLimit: snapshot?.limit ?? null,
+      totalScheduled: this.totalScheduled,
+      totalCompleted: this.totalCompleted,
+      inFlight: this.inFlight,
+      requestsPerMinute: this.metrics.getRequestsPerMinute(now),
+      pacingStatus: this.resolvePacingStatus(snapshot, pausedUntil, now),
+      requestBuckets: this.metrics.getBucketCounts(now),
+    }
+  }
+
+  private resolvePacingStatus(
+    snapshot: RateLimitSnapshot | null,
+    pausedUntil: number | null,
+    now: number,
+  ): PacingStatus {
+    if (pausedUntil !== null) {
+      return 'paused'
+    }
+    if (
+      snapshot !== null &&
+      (snapshot.remaining <= this.lowWatermark || this.headerTracker.getRecommendedDelayMs(now) > 0)
+    ) {
+      return 'throttled'
+    }
+    return 'stable'
+  }
+
+  private syncHeaders(headers: Headers): void {
+    this.headerTracker.update(headers)
+    const snapshot = this.headerTracker.getSnapshot()
+    if (snapshot) {
+      this.callbacks.onRateLimitHeaders?.(snapshot)
     }
   }
 
   private async runWithRateControl<T>(fn: () => Promise<T>): Promise<T> {
     while (true) {
+      const wasPaused = this.pauseGate.getPausedUntil() !== null
       await this.pauseGate.wait()
+      if (wasPaused) {
+        this.callbacks.onResume?.()
+      }
 
       const headerDelay = this.headerTracker.getRecommendedDelayMs()
       if (headerDelay > 0) {
@@ -111,21 +179,40 @@ export class BufferRateLimiter {
       }
 
       await this.bucket.acquire()
-      const result = await fn()
 
-      if (!isFetchResponse(result)) {
+      this.inFlight = true
+      this.callbacks.onRequestStart?.()
+
+      try {
+        const result = await fn()
+
+        if (!isFetchResponse(result)) {
+          this.completeRequest()
+          return result
+        }
+
+        if (result.status === 429) {
+          const retryAfterSeconds =
+            (await parseRetryAfterSeconds(result)) ?? this.defaultRetryAfterSeconds
+          const pausedUntil = Date.now() + retryAfterSeconds * 1000
+          this.pauseGate.pauseFor(retryAfterSeconds * 1000)
+          this.callbacks.onPause?.({ pausedUntil, retryAfterSeconds })
+          continue
+        }
+
+        this.syncHeaders(result.headers)
+        this.completeRequest()
         return result
+      } finally {
+        this.inFlight = false
       }
-
-      if (result.status === 429) {
-        const retryAfterSeconds =
-          (await parseRetryAfterSeconds(result)) ?? this.defaultRetryAfterSeconds
-        this.pauseGate.pauseFor(retryAfterSeconds * 1000)
-        continue
-      }
-
-      this.headerTracker.update(result.headers)
-      return result
     }
+  }
+
+  private completeRequest(): void {
+    const completedAt = Date.now()
+    this.totalCompleted += 1
+    this.metrics.recordCompletion(completedAt)
+    this.callbacks.onRequestComplete?.({ completedAt })
   }
 }
