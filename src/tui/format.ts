@@ -28,6 +28,48 @@ export const formatPercent = (completed: number, total: number): number => {
   return Math.min(100, Math.round((completed / total) * 100))
 }
 
+export const formatHttpStatusSummary = (counts: Record<string, number>): string => {
+  const entries = Object.entries(counts).sort(
+    ([left], [right]) => Number.parseInt(left, 10) - Number.parseInt(right, 10),
+  )
+  if (entries.length === 0) {
+    return '--'
+  }
+  return entries.map(([status, count]) => `${status}×${count}`).join(', ')
+}
+
+const HTTP_STATUS_LABELS: Record<number, string> = {
+  200: 'OK',
+  400: 'Bad Request',
+  401: 'Unauthorized',
+  403: 'Forbidden',
+  404: 'Not Found',
+  429: 'Too Many Requests',
+  500: 'Server Error',
+  502: 'Bad Gateway',
+  503: 'Unavailable',
+  504: 'Gateway Timeout',
+}
+
+/** Human-readable label for the last response status (dashboard). */
+export const formatLastHttpStatus = (status: number | null): string => {
+  if (status === null) {
+    return '--'
+  }
+  const label = HTTP_STATUS_LABELS[status]
+  return label ? `${status} ${label}` : `${status}`
+}
+
+export const formatPauseReason = (reason: string | null): string => {
+  if (reason === 'failure') {
+    return 'FAILURE WAIT'
+  }
+  if (reason === 'rate_limit') {
+    return 'RATE LIMIT'
+  }
+  return '--'
+}
+
 const BLOCKS = [' ', '▂', '▃', '▄', '▅', '▆', '▇', '█'] as const
 
 /** Map a bucket count to a block character for the equalizer. */

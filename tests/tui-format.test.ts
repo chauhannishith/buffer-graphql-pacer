@@ -4,6 +4,9 @@ import {
   formatPacingStatus,
   formatPercent,
   formatProgressBar,
+  formatHttpStatusSummary,
+  formatLastHttpStatus,
+  formatPauseReason,
   formatResetCountdown,
 } from '../src/tui/format'
 
@@ -22,6 +25,17 @@ describe('tui format helpers', () => {
   it('formats pacing status in uppercase', () => {
     expect(formatPacingStatus('stable')).toBe('STABLE')
     expect(formatPacingStatus('throttled')).toBe('THROTTLED')
+  })
+
+  it('formats http status summaries and pause reasons', () => {
+    expect(formatHttpStatusSummary({ '200': 3, '403': 2 })).toBe('200×3, 403×2')
+    expect(formatHttpStatusSummary({})).toBe('--')
+    expect(formatLastHttpStatus(null)).toBe('--')
+    expect(formatLastHttpStatus(200)).toBe('200 OK')
+    expect(formatLastHttpStatus(401)).toBe('401 Unauthorized')
+    expect(formatLastHttpStatus(418)).toBe('418')
+    expect(formatPauseReason('failure')).toBe('FAILURE WAIT')
+    expect(formatPauseReason(null)).toBe('--')
   })
 
   it('maps bucket counts to block characters', () => {

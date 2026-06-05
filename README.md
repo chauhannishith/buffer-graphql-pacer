@@ -216,13 +216,13 @@ console.info(limiter.getState())
 
 ## API surface
 
-| Export                      | Purpose                                                                                     |
-| --------------------------- | ------------------------------------------------------------------------------------------- |
-| `BufferRateLimiter`         | `schedule(fn)` — core queue + pacing                                                        |
-| `createBufferedFetch`       | Drop-in paced `fetch`                                                                       |
-| `createGraphqlRequestFetch` | `GraphQLClient` `fetch` option                                                              |
-| `BufferPacingLink`          | Apollo link (`buffer-graphql-pacer/apollo`)                                                 |
-| `getState()`                | `queueDepth`, tokens, `pausedUntil`, `rateLimitRemaining`, `requestBuckets`, `pacingStatus` |
+| Export                      | Purpose                                                                                                    |
+| --------------------------- | ---------------------------------------------------------------------------------------------------------- |
+| `BufferRateLimiter`         | `schedule(fn)` — core queue + pacing                                                                       |
+| `createBufferedFetch`       | Drop-in paced `fetch`                                                                                      |
+| `createGraphqlRequestFetch` | `GraphQLClient` `fetch` option                                                                             |
+| `BufferPacingLink`          | Apollo link (`buffer-graphql-pacer/apollo`)                                                                |
+| `getState()`                | `queueDepth`, tokens, `pausedUntil`, `pauseReason`, `totalSucceeded`, `totalFailed`, `httpStatusCounts`, … |
 
 Defaults match Buffer’s documented limit: **100 requests / 15 minutes**, **0.9 safety margin**.
 
@@ -234,8 +234,16 @@ Defaults match Buffer’s documented limit: **100 requests / 15 minutes**, **0.9
 | ------------------------------ | ------------------------------------------------------------------------------------------- |
 | Network error (`fetch` throws) | Up to 3 retries with exponential backoff; **token refunded** (request never reached Buffer) |
 | HTTP 5xx                       | Same backoff retries (request reached the server)                                           |
-| HTTP 4xx (except 429)          | Fail fast — no retry                                                                        |
+| HTTP 4xx (except 429)          | Global pause + exponential retry (5 min → 24 h); blocks the queue until retry               |
+| HTTP 200 + GraphQL `errors`    | Same failure backoff (common for quota messages in the body)                                |
+| HTTP 401                       | Same failure backoff (queue blocks — remaining jobs wait, not skipped)                      |
 | HTTP 429                       | Global pause + retry (unchanged)                                                            |
+
+`haltBatchOnFirstFailure` (default **true**) stops subsequent scheduled jobs only after a **terminal** failure (backoff disabled or exhausted). While a job is backing off, the queue waits and later jobs do not run yet.
+
+`maxFailureAttempts` caps how many failure backoffs a single job will take before throwing `FailureBackoffExhaustedError` (default: unlimited). Use it when daily quota is gone and you want the run to stop instead of backing off for hours.
+
+`totalCompleted` tracks finished jobs; `totalSucceeded` / `totalFailed` and `httpStatusCounts` distinguish successes from failures. Disable with `failureBackoff: { enabled: false }` (alias: `quotaExhaustionBackoff`).
 
 Buffer mutations may not be idempotent — use retries cautiously on write operations, or disable with `maxTransientRetries: 0`.
 
@@ -271,6 +279,8 @@ RUN_LIVE_TESTS=1 DASHBOARD=1 pnpm example:live:readonly
 ```
 
 The equalizer bars spike during bursts and flatten when `RateLimit-Remaining` is low or the limiter pauses on HTTP 429.
+
+While the dashboard is open, press **`q`** to stop (calls `limiter.abort()`). **Ctrl+C** does the same via `registerLimiterShutdown` / `runPacedWork`. Both unblock long failure-backoff waits so you are not stuck for minutes.
 
 ## Testing strategy
 

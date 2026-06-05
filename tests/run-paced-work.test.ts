@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { BufferRateLimiter } from '../src/limiter'
+import { BufferRateLimiter, LimiterAbortedError } from '../src/limiter'
 import { runPacedWork } from '../src/tui/run-dashboard'
 
 describe('runPacedWork', () => {
@@ -31,5 +31,20 @@ describe('runPacedWork', () => {
     ran = false
     await runPacedWork(limiter, work, { dashboard: false })
     expect(ran).toBe(true)
+  })
+
+  it('swallows limiter abort errors from work', async () => {
+    const limiter = new BufferRateLimiter({
+      failureBackoff: { baseDelayMs: 60_000, haltBatchOnFirstFailure: false },
+    })
+
+    const work = async (): Promise<void> => {
+      const resultPromise = limiter.schedule(async () => new Response(null, { status: 403 }))
+      await vi.advanceTimersByTimeAsync(0)
+      limiter.abort()
+      await expect(resultPromise).rejects.toBeInstanceOf(LimiterAbortedError)
+    }
+
+    await runPacedWork(limiter, work)
   })
 })

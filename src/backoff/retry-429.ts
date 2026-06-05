@@ -1,13 +1,10 @@
-const delay = (ms: number): Promise<void> =>
-  new Promise((resolve) => {
-    setTimeout(resolve, ms)
-  })
-
 /**
  * Global pause gate used when Buffer returns HTTP 429.
  */
 export class PauseGate {
   private pausedUntilMs = 0
+  private aborted = false
+  private wakeWaiters: Array<() => void> = []
 
   pauseFor(durationMs: number, now = Date.now()): void {
     if (durationMs <= 0) {
@@ -16,14 +13,43 @@ export class PauseGate {
     this.pausedUntilMs = Math.max(this.pausedUntilMs, now + durationMs)
   }
 
+  /** Unblock {@link wait} immediately (e.g. user abort). */
+  abort(): void {
+    this.aborted = true
+    this.pausedUntilMs = 0
+    this.flushWaiters()
+  }
+
+  private flushWaiters(): void {
+    const waiters = this.wakeWaiters
+    this.wakeWaiters = []
+    for (const wake of waiters) {
+      wake()
+    }
+  }
+
   getPausedUntil(now = Date.now()): number | null {
     return this.pausedUntilMs > now ? this.pausedUntilMs : null
   }
 
   async wait(now = Date.now()): Promise<void> {
-    const remainingMs = this.pausedUntilMs - now
-    if (remainingMs > 0) {
-      await delay(remainingMs)
+    const pollMs = 250
+    while (true) {
+      if (this.aborted) {
+        return
+      }
+      const remainingMs = this.pausedUntilMs - now
+      if (remainingMs <= 0) {
+        return
+      }
+      await new Promise<void>((resolve) => {
+        const timeout = setTimeout(resolve, Math.min(remainingMs, pollMs))
+        this.wakeWaiters.push(() => {
+          clearTimeout(timeout)
+          resolve()
+        })
+      })
+      now = Date.now()
     }
   }
 }

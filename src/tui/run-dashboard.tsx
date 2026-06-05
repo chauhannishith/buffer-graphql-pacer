@@ -1,6 +1,10 @@
-import { render } from 'ink'
+import { render, type Instance } from 'ink'
 import React from 'react'
-import type { BufferRateLimiter } from '../limiter'
+import {
+  FailureBackoffExhaustedError,
+  LimiterAbortedError,
+  type BufferRateLimiter,
+} from '../limiter'
 import { Dashboard } from './Dashboard'
 
 export type RunDashboardOptions = {
@@ -16,6 +20,20 @@ export type RunPacedWorkOptions = RunDashboardOptions & {
    * @default false — pacing works silently unless you opt in
    */
   dashboard?: boolean | RunDashboardOptions
+}
+
+const isAbortError = (error: unknown): boolean =>
+  error instanceof LimiterAbortedError || error instanceof FailureBackoffExhaustedError
+
+/** Wire SIGINT to {@link BufferRateLimiter.abort} for paced live scripts. */
+export const registerLimiterShutdown = (limiter: BufferRateLimiter): (() => void) => {
+  const onSigint = (): void => {
+    limiter.abort()
+  }
+  process.once('SIGINT', onSigint)
+  return () => {
+    process.off('SIGINT', onSigint)
+  }
 }
 
 const resolveDashboardOptions = (
@@ -37,21 +55,34 @@ export const runWithDashboard = async (
   options: RunDashboardOptions = {},
 ): Promise<void> => {
   const holdMs = options.holdMs ?? 1_500
-  const instance = render(
-    <Dashboard
-      limiter={limiter}
-      title={options.title ?? 'BUFFER RATE OPTIMIZER'}
-      itemLabel={options.itemLabel ?? 'Posts'}
-    />,
-  )
+  const removeSigint = registerLimiterShutdown(limiter)
+  let instance: Instance | undefined
+
+  const handleQuit = (): void => {
+    limiter.abort()
+  }
 
   try {
+    instance = render(
+      <Dashboard
+        limiter={limiter}
+        title={options.title ?? 'BUFFER RATE OPTIMIZER'}
+        itemLabel={options.itemLabel ?? 'Posts'}
+        onQuit={handleQuit}
+      />,
+    )
+
     await work()
+  } catch (error) {
+    if (!isAbortError(error)) {
+      throw error
+    }
   } finally {
+    removeSigint()
     await new Promise((resolve) => {
       setTimeout(resolve, holdMs)
     })
-    instance.unmount()
+    instance?.unmount()
   }
 }
 
@@ -68,7 +99,16 @@ export const runPacedWork = async (
   const dashOptions = resolveDashboardOptions(dashboard, dashboardDefaults)
 
   if (dashOptions === null) {
-    await work()
+    const removeSigint = registerLimiterShutdown(limiter)
+    try {
+      await work()
+    } catch (error) {
+      if (!isAbortError(error)) {
+        throw error
+      }
+    } finally {
+      removeSigint()
+    }
     return
   }
 

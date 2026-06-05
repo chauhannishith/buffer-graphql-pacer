@@ -6,10 +6,14 @@ export const PACKAGE_NAME = 'buffer-graphql-pacer' as const
 
 export {
   BUFFER_RATE_LIMIT_DEFAULTS,
+  BatchHaltedError,
+  FailureBackoffExhaustedError,
+  LimiterAbortedError,
   BufferRateLimiter,
   type BufferRateLimiterCallbacks,
   type BufferRateLimiterOptions,
   type BufferRateLimiterState,
+  type PauseReason,
   type PacingStatus,
 } from './limiter'
 
@@ -23,6 +27,17 @@ export {
   TRANSIENT_RETRY_DEFAULTS,
   type TransientBackoffOptions,
 } from './backoff/retry-transient'
+export {
+  computeFailureBackoffMs,
+  computeQuotaBackoffMs,
+  FAILURE_BACKOFF_DEFAULTS,
+  isQuotaExhaustionStatus,
+  QUOTA_EXHAUSTION_DEFAULTS,
+  responseHasGraphqlErrors,
+  shouldFailureBackoff,
+  type FailureBackoffOptions,
+  type QuotaExhaustionBackoffOptions,
+} from './backoff/quota-exhaustion'
 export {
   parseRateLimitHeaders,
   RateLimitHeaderTracker,

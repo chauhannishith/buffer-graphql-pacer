@@ -1,5 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { BUFFER_RATE_LIMIT_DEFAULTS, BufferRateLimiter } from '../src/limiter'
+import {
+  BUFFER_RATE_LIMIT_DEFAULTS,
+  BatchHaltedError,
+  BufferRateLimiter,
+  FailureBackoffExhaustedError,
+  LimiterAbortedError,
+} from '../src/limiter'
 
 const rateLimitHeaders = (remaining: string, reset = '2026-06-04T12:15:00.000Z') =>
   new Headers({
@@ -188,8 +194,38 @@ describe('BufferRateLimiter', () => {
     expect(result.status).toBe(200)
   })
 
-  it('does not retry HTTP 4xx responses', async () => {
-    const limiter = new BufferRateLimiter({ maxTransientRetries: 3 })
+  it('pauses with failure backoff on HTTP 401 and retries', async () => {
+    const limiter = new BufferRateLimiter({
+      failureBackoff: { baseDelayMs: 60_000, maxDelayMs: 60_000 },
+    })
+    let attempts = 0
+
+    const resultPromise = limiter.schedule(async () => {
+      attempts += 1
+      if (attempts === 1) {
+        return new Response(null, { status: 401 })
+      }
+      return new Response(null, { status: 200, headers: rateLimitHeaders('10') })
+    })
+
+    await vi.advanceTimersByTimeAsync(0)
+    expect(attempts).toBe(1)
+    expect(limiter.getState().pauseReason).toBe('failure')
+    expect(limiter.getState().batchHalted).toBe(false)
+
+    await vi.advanceTimersByTimeAsync(60_000)
+    const result = await resultPromise
+
+    expect(attempts).toBe(2)
+    expect(result.status).toBe(200)
+    expect(limiter.getState().totalFailed).toBe(0)
+  })
+
+  it('returns HTTP 401 immediately when failure backoff is disabled', async () => {
+    const limiter = new BufferRateLimiter({
+      maxTransientRetries: 3,
+      failureBackoff: { enabled: false },
+    })
     let attempts = 0
 
     const result = await limiter.schedule(async () => {
@@ -199,6 +235,149 @@ describe('BufferRateLimiter', () => {
 
     expect(attempts).toBe(1)
     expect(result.status).toBe(401)
+    expect(limiter.getState().totalSucceeded).toBe(0)
+    expect(limiter.getState().totalFailed).toBe(1)
+    expect(limiter.getState().httpStatusCounts['401']).toBe(1)
+  })
+
+  it('pauses with failure backoff on HTTP 403 and retries', async () => {
+    const limiter = new BufferRateLimiter({
+      failureBackoff: { baseDelayMs: 60_000, maxDelayMs: 60_000 },
+    })
+    let attempts = 0
+
+    const resultPromise = limiter.schedule(async () => {
+      attempts += 1
+      if (attempts === 1) {
+        return new Response(null, { status: 403 })
+      }
+      return new Response(null, { status: 200, headers: rateLimitHeaders('10') })
+    })
+
+    await vi.advanceTimersByTimeAsync(0)
+    expect(attempts).toBe(1)
+    expect(limiter.getState().pauseReason).toBe('failure')
+
+    await vi.advanceTimersByTimeAsync(60_000)
+    const result = await resultPromise
+
+    expect(attempts).toBe(2)
+    expect(result.status).toBe(200)
+    expect(limiter.getState().totalSucceeded).toBe(1)
+    expect(limiter.getState().totalFailed).toBe(0)
+  })
+
+  it('tracks lastHttpStatus from the most recent response including retries', async () => {
+    const limiter = new BufferRateLimiter({
+      failureBackoff: { baseDelayMs: 60_000, maxDelayMs: 60_000 },
+    })
+    let attempts = 0
+
+    const resultPromise = limiter.schedule(async () => {
+      attempts += 1
+      if (attempts === 1) {
+        return new Response(null, { status: 403 })
+      }
+      return new Response(null, { status: 200, headers: rateLimitHeaders('10') })
+    })
+
+    expect(limiter.getState().lastHttpStatus).toBeNull()
+
+    await vi.advanceTimersByTimeAsync(0)
+    expect(limiter.getState().lastHttpStatus).toBe(403)
+
+    await vi.advanceTimersByTimeAsync(60_000)
+    await resultPromise
+    expect(limiter.getState().lastHttpStatus).toBe(200)
+  })
+
+  it('blocks the queue while backing off on the first failure', async () => {
+    const limiter = new BufferRateLimiter({
+      maxRequests: 10,
+      windowMs: 10_000,
+      safetyMargin: 1,
+      failureBackoff: { baseDelayMs: 60_000, maxDelayMs: 60_000 },
+    })
+    let firstAttempts = 0
+    let secondAttempts = 0
+
+    void limiter.schedule(async () => {
+      firstAttempts += 1
+      if (firstAttempts === 1) {
+        return new Response(null, { status: 403 })
+      }
+      return new Response(null, { status: 200, headers: rateLimitHeaders('5') })
+    })
+    void limiter.schedule(async () => {
+      secondAttempts += 1
+      return new Response(null, { status: 200, headers: rateLimitHeaders('4') })
+    })
+
+    await vi.advanceTimersByTimeAsync(0)
+    expect(firstAttempts).toBe(1)
+    expect(secondAttempts).toBe(0)
+    expect(limiter.getState().pauseReason).toBe('failure')
+  })
+
+  it('halts the batch after the first non-retryable failure', async () => {
+    const limiter = new BufferRateLimiter({
+      maxRequests: 10,
+      windowMs: 10_000,
+      safetyMargin: 1,
+      failureBackoff: { enabled: false, haltBatchOnFirstFailure: true },
+    })
+    let attempts = 0
+
+    const first = limiter.schedule(async () => {
+      attempts += 1
+      return new Response(null, { status: 403 })
+    })
+    const second = limiter.schedule(async () => new Response(null, { status: 200 }))
+    const third = limiter.schedule(async () => new Response(null, { status: 200 }))
+
+    const secondRejected = expect(second).rejects.toBeInstanceOf(BatchHaltedError)
+    const thirdRejected = expect(third).rejects.toBeInstanceOf(BatchHaltedError)
+
+    await vi.advanceTimersByTimeAsync(0)
+    await first
+    await secondRejected
+    await thirdRejected
+
+    expect(attempts).toBe(1)
+    expect(limiter.getState().totalFailed).toBe(1)
+    expect(limiter.getState().batchHalted).toBe(true)
+  })
+
+  it('backs off when HTTP 200 includes GraphQL errors', async () => {
+    const limiter = new BufferRateLimiter({
+      failureBackoff: { baseDelayMs: 30_000, maxDelayMs: 30_000 },
+    })
+    let attempts = 0
+
+    const resultPromise = limiter.schedule(async () => {
+      attempts += 1
+      if (attempts === 1) {
+        return new Response(JSON.stringify({ errors: [{ message: 'quota exceeded' }] }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        })
+      }
+      return new Response(JSON.stringify({ data: { ok: true } }), {
+        status: 200,
+        headers: rateLimitHeaders('1'),
+      })
+    })
+
+    await vi.advanceTimersByTimeAsync(0)
+    expect(attempts).toBe(1)
+    expect(limiter.getState().pauseReason).toBe('failure')
+
+    await vi.advanceTimersByTimeAsync(30_000)
+    const result = await resultPromise
+
+    expect(attempts).toBe(2)
+    expect(result.status).toBe(200)
+    expect(limiter.getState().totalSucceeded).toBe(1)
   })
 
   it('fails after exhausting transient retries', async () => {
@@ -247,5 +426,51 @@ describe('BufferRateLimiter', () => {
     await second
 
     expect(timestamps[0]).toBeGreaterThanOrEqual(30_000)
+  })
+
+  it('aborts a job blocked on failure backoff', async () => {
+    const limiter = new BufferRateLimiter({
+      failureBackoff: { baseDelayMs: 60_000, maxDelayMs: 60_000, haltBatchOnFirstFailure: false },
+    })
+    let attempts = 0
+
+    const resultPromise = limiter.schedule(async () => {
+      attempts += 1
+      return new Response(null, { status: 403 })
+    })
+
+    await vi.advanceTimersByTimeAsync(0)
+    expect(attempts).toBe(1)
+
+    limiter.abort()
+    await expect(resultPromise).rejects.toBeInstanceOf(LimiterAbortedError)
+  })
+
+  it('throws when failure backoff hits maxFailureAttempts', async () => {
+    const limiter = new BufferRateLimiter({
+      failureBackoff: {
+        baseDelayMs: 1_000,
+        maxDelayMs: 1_000,
+        maxFailureAttempts: 2,
+        haltBatchOnFirstFailure: false,
+      },
+    })
+    let attempts = 0
+
+    const resultPromise = limiter.schedule(async () => {
+      attempts += 1
+      return new Response(null, { status: 403 })
+    })
+    const rejection = expect(resultPromise).rejects.toBeInstanceOf(FailureBackoffExhaustedError)
+
+    await vi.advanceTimersByTimeAsync(0)
+    expect(attempts).toBe(1)
+
+    await vi.advanceTimersByTimeAsync(1_000)
+    expect(attempts).toBe(2)
+
+    await vi.advanceTimersByTimeAsync(1_000)
+    await rejection
+    expect(attempts).toBe(3)
   })
 })
