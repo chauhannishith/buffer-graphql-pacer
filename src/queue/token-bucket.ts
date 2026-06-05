@@ -67,6 +67,13 @@ export class TokenBucket {
     }
   }
 
+  /** Return tokens when a request never reached the API (e.g. network failure). */
+  release(cost = 1): void {
+    const now = Date.now()
+    this.refill(now)
+    this.tokens = Math.min(this.capacity, this.tokens + cost)
+  }
+
   /** Milliseconds until `cost` tokens are available (0 if already available). */
   msUntilAvailable(cost: number): number {
     const now = Date.now()

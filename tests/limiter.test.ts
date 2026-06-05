@@ -124,6 +124,104 @@ describe('BufferRateLimiter', () => {
     expect(limiter.getState().rateLimitRemaining).toBe(50)
   })
 
+  it('retries transient network errors and refunds the token', async () => {
+    const limiter = new BufferRateLimiter({
+      maxRequests: 2,
+      windowMs: 10_000,
+      safetyMargin: 1,
+      maxTransientRetries: 2,
+      transientRetryBaseDelayMs: 100,
+      transientRetryMaxDelayMs: 100,
+    })
+
+    vi.spyOn(Math, 'random').mockReturnValue(0)
+
+    let attempts = 0
+
+    const resultPromise = limiter.schedule(async () => {
+      attempts += 1
+      if (attempts < 3) {
+        throw new TypeError('fetch failed')
+      }
+      return new Response(null, { status: 200, headers: rateLimitHeaders('10') })
+    })
+
+    await vi.advanceTimersByTimeAsync(0)
+    expect(attempts).toBe(1)
+    expect(limiter.getState().availableTokens).toBe(2)
+
+    await vi.advanceTimersByTimeAsync(100)
+    expect(attempts).toBe(2)
+
+    await vi.advanceTimersByTimeAsync(100)
+    const result = await resultPromise
+
+    expect(attempts).toBe(3)
+    expect(result.status).toBe(200)
+    expect(limiter.getState().availableTokens).toBe(1)
+  })
+
+  it('retries HTTP 5xx responses with backoff', async () => {
+    const limiter = new BufferRateLimiter({
+      maxTransientRetries: 2,
+      transientRetryBaseDelayMs: 50,
+      transientRetryMaxDelayMs: 50,
+    })
+
+    let attempts = 0
+
+    const resultPromise = limiter.schedule(async () => {
+      attempts += 1
+      if (attempts === 1) {
+        return new Response(null, { status: 503 })
+      }
+      return new Response(null, { status: 200, headers: rateLimitHeaders('12') })
+    })
+
+    await vi.advanceTimersByTimeAsync(0)
+    expect(attempts).toBe(1)
+
+    await vi.advanceTimersByTimeAsync(50)
+    const result = await resultPromise
+
+    expect(attempts).toBe(2)
+    expect(result.status).toBe(200)
+  })
+
+  it('does not retry HTTP 4xx responses', async () => {
+    const limiter = new BufferRateLimiter({ maxTransientRetries: 3 })
+    let attempts = 0
+
+    const result = await limiter.schedule(async () => {
+      attempts += 1
+      return new Response(null, { status: 401 })
+    })
+
+    expect(attempts).toBe(1)
+    expect(result.status).toBe(401)
+  })
+
+  it('fails after exhausting transient retries', async () => {
+    const limiter = new BufferRateLimiter({
+      maxTransientRetries: 1,
+      transientRetryBaseDelayMs: 10,
+      transientRetryMaxDelayMs: 10,
+    })
+
+    let attempts = 0
+
+    const resultPromise = limiter.schedule(async () => {
+      attempts += 1
+      throw new TypeError('fetch failed')
+    })
+    const rejection = expect(resultPromise).rejects.toThrow('fetch failed')
+
+    await vi.advanceTimersByTimeAsync(0)
+    await vi.advanceTimersByTimeAsync(10)
+    await rejection
+    expect(attempts).toBe(2)
+  })
+
   it('applies header-driven delay when remaining is at low watermark', async () => {
     const limiter = new BufferRateLimiter({
       maxRequests: 100,

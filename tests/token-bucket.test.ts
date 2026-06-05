@@ -56,6 +56,22 @@ describe('TokenBucket', () => {
     expect(bucket.getAvailableTokens()).toBeCloseTo(100, 0)
   })
 
+  it('release returns tokens up to capacity', () => {
+    const bucket = new TokenBucket({
+      maxRequests: 10,
+      windowMs: 10_000,
+      safetyMargin: 1,
+    })
+
+    for (let i = 0; i < 10; i++) {
+      bucket.tryConsume()
+    }
+    expect(bucket.getAvailableTokens()).toBe(0)
+
+    bucket.release()
+    expect(bucket.getAvailableTokens()).toBe(1)
+  })
+
   it('acquire waits until tokens refill', async () => {
     const bucket = new TokenBucket({
       maxRequests: 10,

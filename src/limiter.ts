@@ -1,4 +1,11 @@
 import { parseRetryAfterSeconds, PauseGate } from './backoff/retry-429'
+import {
+  computeTransientBackoffMs,
+  isRetryableServerResponse,
+  isTransientNetworkError,
+  TRANSIENT_RETRY_DEFAULTS,
+  type TransientBackoffOptions,
+} from './backoff/retry-transient'
 import { RateLimitHeaderTracker } from './headers/rate-limit-state'
 import type { RateLimitSnapshot } from './headers/rate-limit-state'
 import { JobQueue } from './queue/job-queue'
@@ -22,6 +29,13 @@ export type BufferRateLimiterCallbacks = {
   onRateLimitHeaders?: (snapshot: RateLimitSnapshot) => void
   onPause?: (info: { pausedUntil: number; retryAfterSeconds: number }) => void
   onResume?: () => void
+  onTransientRetry?: (info: {
+    attempt: number
+    reason: 'network' | 'server'
+    delayMs: number
+    error?: unknown
+    status?: number
+  }) => void
 }
 
 export type BufferRateLimiterOptions = {
@@ -32,6 +46,10 @@ export type BufferRateLimiterOptions = {
   lowWatermark?: number
   /** Used when a 429 response has no parseable retryAfter value. */
   defaultRetryAfterSeconds?: number
+  /** Retries after network errors or HTTP 5xx before failing the scheduled job. */
+  maxTransientRetries?: number
+  transientRetryBaseDelayMs?: number
+  transientRetryMaxDelayMs?: number
   callbacks?: BufferRateLimiterCallbacks
 }
 
@@ -77,6 +95,8 @@ export class BufferRateLimiter {
   private readonly callbacks: BufferRateLimiterCallbacks
   private readonly lowWatermark: number
   private readonly defaultRetryAfterSeconds: number
+  private readonly maxTransientRetries: number
+  private readonly transientBackoffOptions: TransientBackoffOptions
 
   private totalScheduled = 0
   private totalCompleted = 0
@@ -92,6 +112,11 @@ export class BufferRateLimiter {
     this.headerTracker = new RateLimitHeaderTracker(this.lowWatermark)
     this.defaultRetryAfterSeconds =
       options.defaultRetryAfterSeconds ?? BUFFER_RATE_LIMIT_DEFAULTS.defaultRetryAfterSeconds
+    this.maxTransientRetries = options.maxTransientRetries ?? TRANSIENT_RETRY_DEFAULTS.maxRetries
+    this.transientBackoffOptions = {
+      baseDelayMs: options.transientRetryBaseDelayMs ?? TRANSIENT_RETRY_DEFAULTS.baseDelayMs,
+      maxDelayMs: options.transientRetryMaxDelayMs ?? TRANSIENT_RETRY_DEFAULTS.maxDelayMs,
+    }
     this.callbacks = options.callbacks ?? {}
   }
 
@@ -102,6 +127,7 @@ export class BufferRateLimiter {
    * When the scheduled function returns a `Response`, the limiter:
    * - syncs pacing from `RateLimit-*` headers on success
    * - pauses and retries after HTTP 429 using `retryAfter`
+   * - retries transient network errors and HTTP 5xx with exponential backoff
    */
   schedule<T>(fn: () => Promise<T>): Promise<T> {
     this.totalScheduled += 1
@@ -166,6 +192,8 @@ export class BufferRateLimiter {
   }
 
   private async runWithRateControl<T>(fn: () => Promise<T>): Promise<T> {
+    let transientAttempts = 0
+
     while (true) {
       const wasPaused = this.pauseGate.getPausedUntil() !== null
       await this.pauseGate.wait()
@@ -200,9 +228,38 @@ export class BufferRateLimiter {
           continue
         }
 
+        if (isRetryableServerResponse(result) && transientAttempts < this.maxTransientRetries) {
+          const delayMs = computeTransientBackoffMs(transientAttempts, this.transientBackoffOptions)
+          transientAttempts += 1
+          this.callbacks.onTransientRetry?.({
+            attempt: transientAttempts,
+            reason: 'server',
+            delayMs,
+            status: result.status,
+          })
+          await delay(delayMs)
+          continue
+        }
+
         this.syncHeaders(result.headers)
         this.completeRequest()
         return result
+      } catch (error) {
+        if (isTransientNetworkError(error) && transientAttempts < this.maxTransientRetries) {
+          this.bucket.release()
+          const delayMs = computeTransientBackoffMs(transientAttempts, this.transientBackoffOptions)
+          transientAttempts += 1
+          this.callbacks.onTransientRetry?.({
+            attempt: transientAttempts,
+            reason: 'network',
+            delayMs,
+            error,
+          })
+          await delay(delayMs)
+          continue
+        }
+
+        throw error
       } finally {
         this.inFlight = false
       }

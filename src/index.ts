@@ -17,6 +17,13 @@ export { RequestMetrics, type RequestMetricsOptions } from './telemetry/request-
 
 export { parseRetryAfterSeconds, PauseGate } from './backoff/retry-429'
 export {
+  computeTransientBackoffMs,
+  isRetryableServerResponse,
+  isTransientNetworkError,
+  TRANSIENT_RETRY_DEFAULTS,
+  type TransientBackoffOptions,
+} from './backoff/retry-transient'
+export {
   parseRateLimitHeaders,
   RateLimitHeaderTracker,
   type RateLimitSnapshot,
