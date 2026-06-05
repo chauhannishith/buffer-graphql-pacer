@@ -216,12 +216,12 @@ console.info(limiter.getState())
 
 ## API surface
 
-| Export                      | Purpose                                                                                     |
-| --------------------------- | ------------------------------------------------------------------------------------------- |
-| `BufferRateLimiter`         | `schedule(fn)` — core queue + pacing                                                        |
-| `createBufferedFetch`       | Drop-in paced `fetch`                                                                       |
-| `createGraphqlRequestFetch` | `GraphQLClient` `fetch` option                                                              |
-| `BufferPacingLink`          | Apollo link (`buffer-graphql-pacer/apollo`)                                                 |
+| Export                      | Purpose                                                                                                    |
+| --------------------------- | ---------------------------------------------------------------------------------------------------------- |
+| `BufferRateLimiter`         | `schedule(fn)` — core queue + pacing                                                                       |
+| `createBufferedFetch`       | Drop-in paced `fetch`                                                                                      |
+| `createGraphqlRequestFetch` | `GraphQLClient` `fetch` option                                                                             |
+| `BufferPacingLink`          | Apollo link (`buffer-graphql-pacer/apollo`)                                                                |
 | `getState()`                | `queueDepth`, tokens, `pausedUntil`, `pauseReason`, `totalSucceeded`, `totalFailed`, `httpStatusCounts`, … |
 
 Defaults match Buffer’s documented limit: **100 requests / 15 minutes**, **0.9 safety margin**.
