@@ -10,7 +10,7 @@
  *   RUN_LIVE_TESTS=1 DASHBOARD=1 pnpm example:live:readonly
  */
 import { BufferRateLimiter, createBufferedFetch } from '../src/index'
-import { runWithDashboard } from '../src/tui/run-dashboard'
+import { runPacedWork } from '../src/tui/run-dashboard'
 import { buildAuthHeaders, getLiveBufferConfig } from './lib/live-env'
 
 const ORG_QUERY = `
@@ -56,7 +56,8 @@ const runPaced = async (url: string, token: string): Promise<void> => {
     Promise.all(Array.from({ length: FLOOD_COUNT }, () => postQuery(url, token, bufferedFetch)))
 
   if (USE_DASHBOARD) {
-    await runWithDashboard(limiter, work, {
+    await runPacedWork(limiter, work, {
+      dashboard: true,
       title: 'BUFFER RATE OPTIMIZER',
       itemLabel: 'Requests',
     })

@@ -108,16 +108,34 @@ import { BufferPacingLink } from 'buffer-graphql-pacer/apollo'
 
 Defaults match Buffer’s documented limit: **100 requests / 15 minutes**, **0.9 safety margin**.
 
-## Terminal dashboard
+## Terminal dashboard (opt-in)
 
-Ink-powered TUI for demos and live runs — progress bar, Buffer telemetry, and a rolling request-frequency equalizer.
+The core limiter (`createBufferedFetch`, `BufferRateLimiter`) **never** shows a terminal UI. The dashboard is a separate optional layer — **disabled by default**.
+
+```typescript
+import { BufferRateLimiter, createBufferedFetch } from 'buffer-graphql-pacer'
+import { runPacedWork } from 'buffer-graphql-pacer/tui'
+
+const limiter = new BufferRateLimiter()
+const fetch = createBufferedFetch(limiter)
+
+// dashboard: false (default) — silent pacing for production scripts
+await runPacedWork(limiter, () => scheduleAllPosts(fetch), { dashboard: false })
+
+// dashboard: true — terminal UI for local dev or demos
+await runPacedWork(limiter, () => scheduleAllPosts(fetch), {
+  dashboard: true,
+  title: 'BUFFER RATE OPTIMIZER',
+  itemLabel: 'Posts',
+})
+```
 
 ```bash
 # MSW demo (no API token — great for GIFs)
 pnpm example:dashboard
 FLOOD_COUNT=80 pnpm example:dashboard
 
-# Live read-only with dashboard
+# Live read-only with dashboard (example script uses DASHBOARD=1)
 RUN_LIVE_TESTS=1 DASHBOARD=1 pnpm example:live:readonly
 ```
 

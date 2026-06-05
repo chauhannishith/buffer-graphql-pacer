@@ -6,7 +6,7 @@
  */
 import { setupServer } from 'msw/node'
 import { BufferRateLimiter, createBufferedFetch } from '../src/index'
-import { runWithDashboard } from '../src/tui/run-dashboard'
+import { runPacedWork } from '../src/tui/run-dashboard'
 import { bufferApiHandlers, MOCK_BUFFER_GRAPHQL_URL } from '../tests/mocks/buffer-api'
 
 const FLOOD_COUNT = Number(process.env.FLOOD_COUNT ?? 50)
@@ -24,7 +24,7 @@ const main = async (): Promise<void> => {
   })
   const bufferedFetch = createBufferedFetch(limiter)
 
-  await runWithDashboard(
+  await runPacedWork(
     limiter,
     async () => {
       await Promise.all(
@@ -37,7 +37,7 @@ const main = async (): Promise<void> => {
         ),
       )
     },
-    { title: 'BUFFER RATE OPTIMIZER', itemLabel: 'Requests' },
+    { dashboard: true, title: 'BUFFER RATE OPTIMIZER', itemLabel: 'Requests' },
   )
 
   server.close()
