@@ -108,6 +108,19 @@ import { BufferPacingLink } from 'buffer-graphql-pacer/apollo'
 
 Defaults match Buffer’s documented limit: **100 requests / 15 minutes**, **0.9 safety margin**.
 
+### Transient failure retries
+
+`BufferRateLimiter` retries flaky work automatically:
+
+| Failure                        | Behavior                                                                                    |
+| ------------------------------ | ------------------------------------------------------------------------------------------- |
+| Network error (`fetch` throws) | Up to 3 retries with exponential backoff; **token refunded** (request never reached Buffer) |
+| HTTP 5xx                       | Same backoff retries (request reached the server)                                           |
+| HTTP 4xx (except 429)          | Fail fast — no retry                                                                        |
+| HTTP 429                       | Global pause + retry (unchanged)                                                            |
+
+Buffer mutations may not be idempotent — use retries cautiously on write operations, or disable with `maxTransientRetries: 0`.
+
 ## Terminal dashboard (opt-in)
 
 The core limiter (`createBufferedFetch`, `BufferRateLimiter`) **never** shows a terminal UI. The dashboard is a separate optional layer — **disabled by default**.
