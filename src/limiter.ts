@@ -1,5 +1,11 @@
 import { parseRetryAfterSeconds, PauseGate } from './backoff/retry-429'
 import {
+  computeQuotaBackoffMs,
+  isQuotaExhaustionStatus,
+  QUOTA_EXHAUSTION_DEFAULTS,
+  type QuotaExhaustionBackoffOptions,
+} from './backoff/quota-exhaustion'
+import {
   computeTransientBackoffMs,
   isRetryableServerResponse,
   isTransientNetworkError,
@@ -23,6 +29,8 @@ export const BUFFER_RATE_LIMIT_DEFAULTS = {
 
 export type PacingStatus = 'stable' | 'throttled' | 'paused'
 
+export type PauseReason = 'rate_limit' | 'quota' | null
+
 export type BufferRateLimiterCallbacks = {
   onRequestStart?: () => void
   onRequestComplete?: (info: { completedAt: number }) => void
@@ -35,6 +43,12 @@ export type BufferRateLimiterCallbacks = {
     delayMs: number
     error?: unknown
     status?: number
+  }) => void
+  onQuotaWait?: (info: {
+    attempt: number
+    delayMs: number
+    pausedUntil: number
+    status: number
   }) => void
 }
 
@@ -50,6 +64,8 @@ export type BufferRateLimiterOptions = {
   maxTransientRetries?: number
   transientRetryBaseDelayMs?: number
   transientRetryMaxDelayMs?: number
+  /** Pause and retry when daily/plan quota responses are returned (default: HTTP 403). */
+  quotaExhaustionBackoff?: QuotaExhaustionBackoffOptions
   callbacks?: BufferRateLimiterCallbacks
 }
 
@@ -63,6 +79,13 @@ export type BufferRateLimiterState = {
   rateLimitLimit: number | null
   totalScheduled: number
   totalCompleted: number
+  /** HTTP 2xx completions (Response results only). */
+  totalSucceeded: number
+  /** HTTP non-2xx completions (Response results only). */
+  totalFailed: number
+  /** Count of finished HTTP responses keyed by status code. */
+  httpStatusCounts: Record<string, number>
+  pauseReason: PauseReason
   inFlight: boolean
   requestsPerMinute: number
   pacingStatus: PacingStatus
@@ -97,9 +120,17 @@ export class BufferRateLimiter {
   private readonly defaultRetryAfterSeconds: number
   private readonly maxTransientRetries: number
   private readonly transientBackoffOptions: TransientBackoffOptions
+  private readonly quotaExhaustionBackoff: Required<
+    Pick<QuotaExhaustionBackoffOptions, 'enabled' | 'statuses' | 'baseDelayMs' | 'maxDelayMs'>
+  >
 
   private totalScheduled = 0
   private totalCompleted = 0
+  private totalSucceeded = 0
+  private totalFailed = 0
+  private readonly httpStatusCounts: Record<string, number> = {}
+  private quotaBackoffAttempt = 0
+  private pauseReason: PauseReason = null
   private inFlight = false
 
   constructor(options: BufferRateLimiterOptions = {}) {
@@ -117,6 +148,13 @@ export class BufferRateLimiter {
       baseDelayMs: options.transientRetryBaseDelayMs ?? TRANSIENT_RETRY_DEFAULTS.baseDelayMs,
       maxDelayMs: options.transientRetryMaxDelayMs ?? TRANSIENT_RETRY_DEFAULTS.maxDelayMs,
     }
+    const quotaOptions = options.quotaExhaustionBackoff ?? {}
+    this.quotaExhaustionBackoff = {
+      enabled: quotaOptions.enabled ?? true,
+      statuses: quotaOptions.statuses ?? [...QUOTA_EXHAUSTION_DEFAULTS.statuses],
+      baseDelayMs: quotaOptions.baseDelayMs ?? QUOTA_EXHAUSTION_DEFAULTS.baseDelayMs,
+      maxDelayMs: quotaOptions.maxDelayMs ?? QUOTA_EXHAUSTION_DEFAULTS.maxDelayMs,
+    }
     this.callbacks = options.callbacks ?? {}
   }
 
@@ -127,6 +165,7 @@ export class BufferRateLimiter {
    * When the scheduled function returns a `Response`, the limiter:
    * - syncs pacing from `RateLimit-*` headers on success
    * - pauses and retries after HTTP 429 using `retryAfter`
+   * - pauses with exponential backoff (up to 24h) on quota exhaustion (default: HTTP 403)
    * - retries transient network errors and HTTP 5xx with exponential backoff
    */
   schedule<T>(fn: () => Promise<T>): Promise<T> {
@@ -159,6 +198,10 @@ export class BufferRateLimiter {
       rateLimitLimit: snapshot?.limit ?? null,
       totalScheduled: this.totalScheduled,
       totalCompleted: this.totalCompleted,
+      totalSucceeded: this.totalSucceeded,
+      totalFailed: this.totalFailed,
+      httpStatusCounts: { ...this.httpStatusCounts },
+      pauseReason: this.pauseReason,
       inFlight: this.inFlight,
       requestsPerMinute: this.metrics.getRequestsPerMinute(now),
       pacingStatus: this.resolvePacingStatus(snapshot, pausedUntil, now),
@@ -198,6 +241,7 @@ export class BufferRateLimiter {
       const wasPaused = this.pauseGate.getPausedUntil() !== null
       await this.pauseGate.wait()
       if (wasPaused) {
+        this.pauseReason = null
         this.callbacks.onResume?.()
       }
 
@@ -223,8 +267,30 @@ export class BufferRateLimiter {
           const retryAfterSeconds =
             (await parseRetryAfterSeconds(result)) ?? this.defaultRetryAfterSeconds
           const pausedUntil = Date.now() + retryAfterSeconds * 1000
+          this.pauseReason = 'rate_limit'
           this.pauseGate.pauseFor(retryAfterSeconds * 1000)
           this.callbacks.onPause?.({ pausedUntil, retryAfterSeconds })
+          continue
+        }
+
+        if (
+          this.quotaExhaustionBackoff.enabled &&
+          isQuotaExhaustionStatus(result.status, this.quotaExhaustionBackoff.statuses)
+        ) {
+          const delayMs = computeQuotaBackoffMs(this.quotaBackoffAttempt, {
+            baseDelayMs: this.quotaExhaustionBackoff.baseDelayMs,
+            maxDelayMs: this.quotaExhaustionBackoff.maxDelayMs,
+          })
+          const pausedUntil = Date.now() + delayMs
+          this.pauseReason = 'quota'
+          this.pauseGate.pauseFor(delayMs)
+          this.quotaBackoffAttempt += 1
+          this.callbacks.onQuotaWait?.({
+            attempt: this.quotaBackoffAttempt,
+            delayMs,
+            pausedUntil,
+            status: result.status,
+          })
           continue
         }
 
@@ -242,7 +308,7 @@ export class BufferRateLimiter {
         }
 
         this.syncHeaders(result.headers)
-        this.completeRequest()
+        this.finishHttpRequest(result.status)
         return result
       } catch (error) {
         if (isTransientNetworkError(error) && transientAttempts < this.maxTransientRetries) {
@@ -269,6 +335,24 @@ export class BufferRateLimiter {
   private completeRequest(): void {
     const completedAt = Date.now()
     this.totalCompleted += 1
+    this.metrics.recordCompletion(completedAt)
+    this.callbacks.onRequestComplete?.({ completedAt })
+  }
+
+  private finishHttpRequest(status: number): void {
+    const completedAt = Date.now()
+    this.totalCompleted += 1
+
+    const statusKey = String(status)
+    this.httpStatusCounts[statusKey] = (this.httpStatusCounts[statusKey] ?? 0) + 1
+
+    if (status >= 200 && status < 300) {
+      this.totalSucceeded += 1
+      this.quotaBackoffAttempt = 0
+    } else {
+      this.totalFailed += 1
+    }
+
     this.metrics.recordCompletion(completedAt)
     this.callbacks.onRequestComplete?.({ completedAt })
   }

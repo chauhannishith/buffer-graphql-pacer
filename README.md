@@ -222,7 +222,7 @@ console.info(limiter.getState())
 | `createBufferedFetch`       | Drop-in paced `fetch`                                                                       |
 | `createGraphqlRequestFetch` | `GraphQLClient` `fetch` option                                                              |
 | `BufferPacingLink`          | Apollo link (`buffer-graphql-pacer/apollo`)                                                 |
-| `getState()`                | `queueDepth`, tokens, `pausedUntil`, `rateLimitRemaining`, `requestBuckets`, `pacingStatus` |
+| `getState()`                | `queueDepth`, tokens, `pausedUntil`, `pauseReason`, `totalSucceeded`, `totalFailed`, `httpStatusCounts`, … |
 
 Defaults match Buffer’s documented limit: **100 requests / 15 minutes**, **0.9 safety margin**.
 
@@ -234,8 +234,11 @@ Defaults match Buffer’s documented limit: **100 requests / 15 minutes**, **0.9
 | ------------------------------ | ------------------------------------------------------------------------------------------- |
 | Network error (`fetch` throws) | Up to 3 retries with exponential backoff; **token refunded** (request never reached Buffer) |
 | HTTP 5xx                       | Same backoff retries (request reached the server)                                           |
-| HTTP 4xx (except 429)          | Fail fast — no retry                                                                        |
+| HTTP 403 (daily/plan quota)    | Global pause + exponential retry (5 min → 24 h cap per wait)                                |
+| HTTP 4xx (except 429/403)      | Fail fast — no retry; counted in `httpStatusCounts`                                         |
 | HTTP 429                       | Global pause + retry (unchanged)                                                            |
+
+`totalCompleted` tracks finished jobs; `totalSucceeded` / `totalFailed` and `httpStatusCounts` distinguish HTTP 200 from 403/401/etc. Disable quota waits with `quotaExhaustionBackoff: { enabled: false }`.
 
 Buffer mutations may not be idempotent — use retries cautiously on write operations, or disable with `maxTransientRetries: 0`.
 

@@ -188,8 +188,11 @@ describe('BufferRateLimiter', () => {
     expect(result.status).toBe(200)
   })
 
-  it('does not retry HTTP 4xx responses', async () => {
-    const limiter = new BufferRateLimiter({ maxTransientRetries: 3 })
+  it('does not retry HTTP 401 and records failure status', async () => {
+    const limiter = new BufferRateLimiter({
+      maxTransientRetries: 3,
+      quotaExhaustionBackoff: { enabled: true },
+    })
     let attempts = 0
 
     const result = await limiter.schedule(async () => {
@@ -199,6 +202,36 @@ describe('BufferRateLimiter', () => {
 
     expect(attempts).toBe(1)
     expect(result.status).toBe(401)
+    expect(limiter.getState().totalSucceeded).toBe(0)
+    expect(limiter.getState().totalFailed).toBe(1)
+    expect(limiter.getState().httpStatusCounts['401']).toBe(1)
+  })
+
+  it('pauses with quota backoff on HTTP 403 and retries', async () => {
+    const limiter = new BufferRateLimiter({
+      quotaExhaustionBackoff: { baseDelayMs: 60_000, maxDelayMs: 60_000 },
+    })
+    let attempts = 0
+
+    const resultPromise = limiter.schedule(async () => {
+      attempts += 1
+      if (attempts === 1) {
+        return new Response(null, { status: 403 })
+      }
+      return new Response(null, { status: 200, headers: rateLimitHeaders('10') })
+    })
+
+    await vi.advanceTimersByTimeAsync(0)
+    expect(attempts).toBe(1)
+    expect(limiter.getState().pauseReason).toBe('quota')
+
+    await vi.advanceTimersByTimeAsync(60_000)
+    const result = await resultPromise
+
+    expect(attempts).toBe(2)
+    expect(result.status).toBe(200)
+    expect(limiter.getState().totalSucceeded).toBe(1)
+    expect(limiter.getState().totalFailed).toBe(0)
   })
 
   it('fails after exhausting transient retries', async () => {

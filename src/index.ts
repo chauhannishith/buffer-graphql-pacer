@@ -10,6 +10,7 @@ export {
   type BufferRateLimiterCallbacks,
   type BufferRateLimiterOptions,
   type BufferRateLimiterState,
+  type PauseReason,
   type PacingStatus,
 } from './limiter'
 
@@ -23,6 +24,12 @@ export {
   TRANSIENT_RETRY_DEFAULTS,
   type TransientBackoffOptions,
 } from './backoff/retry-transient'
+export {
+  computeQuotaBackoffMs,
+  isQuotaExhaustionStatus,
+  QUOTA_EXHAUSTION_DEFAULTS,
+  type QuotaExhaustionBackoffOptions,
+} from './backoff/quota-exhaustion'
 export {
   parseRateLimitHeaders,
   RateLimitHeaderTracker,

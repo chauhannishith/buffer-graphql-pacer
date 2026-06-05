@@ -33,11 +33,21 @@ const postQuery = async (url: string, token: string, fetchImpl: typeof fetch): P
     body: JSON.stringify({ query: ORG_QUERY }),
   })
 
-const summarize = (responses: Response[]) => ({
-  total: responses.length,
-  ok: responses.filter((response) => response.status === 200).length,
-  throttled: responses.filter((response) => response.status === 429).length,
-})
+const summarize = (responses: Response[]) => {
+  const byStatus: Record<string, number> = {}
+
+  for (const response of responses) {
+    const statusKey = String(response.status)
+    byStatus[statusKey] = (byStatus[statusKey] ?? 0) + 1
+  }
+
+  return {
+    total: responses.length,
+    ok: responses.filter((response) => response.status === 200).length,
+    throttled: responses.filter((response) => response.status === 429).length,
+    byStatus,
+  }
+}
 
 const runUnpaced = async (url: string, token: string): Promise<void> => {
   console.log(`Unpaced: firing ${FLOOD_COUNT} parallel read-only requests`)

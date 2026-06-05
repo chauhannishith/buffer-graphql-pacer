@@ -28,6 +28,26 @@ export const formatPercent = (completed: number, total: number): number => {
   return Math.min(100, Math.round((completed / total) * 100))
 }
 
+export const formatHttpStatusSummary = (counts: Record<string, number>): string => {
+  const entries = Object.entries(counts).sort(
+    ([left], [right]) => Number.parseInt(left, 10) - Number.parseInt(right, 10),
+  )
+  if (entries.length === 0) {
+    return '--'
+  }
+  return entries.map(([status, count]) => `${status}×${count}`).join(', ')
+}
+
+export const formatPauseReason = (reason: string | null): string => {
+  if (reason === 'quota') {
+    return 'QUOTA WAIT'
+  }
+  if (reason === 'rate_limit') {
+    return 'RATE LIMIT'
+  }
+  return '--'
+}
+
 const BLOCKS = [' ', '▂', '▃', '▄', '▅', '▆', '▇', '█'] as const
 
 /** Map a bucket count to a block character for the equalizer. */

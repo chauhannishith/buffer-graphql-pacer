@@ -34,6 +34,8 @@ export const Dashboard = ({
         {'='.repeat(23)} {title} {'='.repeat(23)}
       </Text>
       <ProgressBar
+        succeeded={state.totalSucceeded}
+        failed={state.totalFailed}
         completed={state.totalCompleted}
         total={state.totalScheduled}
         label={itemLabel}

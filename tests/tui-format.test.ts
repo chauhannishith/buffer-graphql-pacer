@@ -4,6 +4,8 @@ import {
   formatPacingStatus,
   formatPercent,
   formatProgressBar,
+  formatHttpStatusSummary,
+  formatPauseReason,
   formatResetCountdown,
 } from '../src/tui/format'
 
@@ -22,6 +24,13 @@ describe('tui format helpers', () => {
   it('formats pacing status in uppercase', () => {
     expect(formatPacingStatus('stable')).toBe('STABLE')
     expect(formatPacingStatus('throttled')).toBe('THROTTLED')
+  })
+
+  it('formats http status summaries and pause reasons', () => {
+    expect(formatHttpStatusSummary({ '200': 3, '403': 2 })).toBe('200×3, 403×2')
+    expect(formatHttpStatusSummary({})).toBe('--')
+    expect(formatPauseReason('quota')).toBe('QUOTA WAIT')
+    expect(formatPauseReason(null)).toBe('--')
   })
 
   it('maps bucket counts to block characters', () => {
