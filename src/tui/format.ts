@@ -38,6 +38,28 @@ export const formatHttpStatusSummary = (counts: Record<string, number>): string 
   return entries.map(([status, count]) => `${status}×${count}`).join(', ')
 }
 
+const HTTP_STATUS_LABELS: Record<number, string> = {
+  200: 'OK',
+  400: 'Bad Request',
+  401: 'Unauthorized',
+  403: 'Forbidden',
+  404: 'Not Found',
+  429: 'Too Many Requests',
+  500: 'Server Error',
+  502: 'Bad Gateway',
+  503: 'Unavailable',
+  504: 'Gateway Timeout',
+}
+
+/** Human-readable label for the last response status (dashboard). */
+export const formatLastHttpStatus = (status: number | null): string => {
+  if (status === null) {
+    return '--'
+  }
+  const label = HTTP_STATUS_LABELS[status]
+  return label ? `${status} ${label}` : `${status}`
+}
+
 export const formatPauseReason = (reason: string | null): string => {
   if (reason === 'failure') {
     return 'FAILURE WAIT'

@@ -267,6 +267,30 @@ describe('BufferRateLimiter', () => {
     expect(limiter.getState().totalFailed).toBe(0)
   })
 
+  it('tracks lastHttpStatus from the most recent response including retries', async () => {
+    const limiter = new BufferRateLimiter({
+      failureBackoff: { baseDelayMs: 60_000, maxDelayMs: 60_000 },
+    })
+    let attempts = 0
+
+    const resultPromise = limiter.schedule(async () => {
+      attempts += 1
+      if (attempts === 1) {
+        return new Response(null, { status: 403 })
+      }
+      return new Response(null, { status: 200, headers: rateLimitHeaders('10') })
+    })
+
+    expect(limiter.getState().lastHttpStatus).toBeNull()
+
+    await vi.advanceTimersByTimeAsync(0)
+    expect(limiter.getState().lastHttpStatus).toBe(403)
+
+    await vi.advanceTimersByTimeAsync(60_000)
+    await resultPromise
+    expect(limiter.getState().lastHttpStatus).toBe(200)
+  })
+
   it('blocks the queue while backing off on the first failure', async () => {
     const limiter = new BufferRateLimiter({
       maxRequests: 10,

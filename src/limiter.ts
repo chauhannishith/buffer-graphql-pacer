@@ -128,6 +128,8 @@ export type BufferRateLimiterState = {
   totalFailed: number
   /** Count of finished HTTP responses keyed by status code. */
   httpStatusCounts: Record<string, number>
+  /** Status code from the most recent HTTP response (including retries). */
+  lastHttpStatus: number | null
   pauseReason: PauseReason
   /** True after the first non-retryable failure; remaining jobs are skipped. */
   batchHalted: boolean
@@ -188,6 +190,7 @@ export class BufferRateLimiter {
   private totalSucceeded = 0
   private totalFailed = 0
   private readonly httpStatusCounts: Record<string, number> = {}
+  private lastHttpStatus: number | null = null
   private failureBackoffAttempt = 0
   private batchHalted = false
   private aborted = false
@@ -285,6 +288,7 @@ export class BufferRateLimiter {
       totalSucceeded: this.totalSucceeded,
       totalFailed: this.totalFailed,
       httpStatusCounts: { ...this.httpStatusCounts },
+      lastHttpStatus: this.lastHttpStatus,
       pauseReason: this.pauseReason,
       batchHalted: this.batchHalted,
       inFlight: this.inFlight,
@@ -352,6 +356,8 @@ export class BufferRateLimiter {
           this.completeRequest()
           return result
         }
+
+        this.lastHttpStatus = result.status
 
         if (result.status === 429) {
           const retryAfterSeconds =
