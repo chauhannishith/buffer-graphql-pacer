@@ -98,15 +98,48 @@ import { BufferPacingLink } from 'buffer-graphql-pacer/apollo'
 
 ## API surface
 
-| Export                      | Purpose                                                   |
-| --------------------------- | --------------------------------------------------------- |
-| `BufferRateLimiter`         | `schedule(fn)` — core queue + pacing                      |
-| `createBufferedFetch`       | Drop-in paced `fetch`                                     |
-| `createGraphqlRequestFetch` | `GraphQLClient` `fetch` option                            |
-| `BufferPacingLink`          | Apollo link (`buffer-graphql-pacer/apollo`)               |
-| `getState()`                | `queueDepth`, tokens, `pausedUntil`, `rateLimitRemaining` |
+| Export                      | Purpose                                                                                     |
+| --------------------------- | ------------------------------------------------------------------------------------------- |
+| `BufferRateLimiter`         | `schedule(fn)` — core queue + pacing                                                        |
+| `createBufferedFetch`       | Drop-in paced `fetch`                                                                       |
+| `createGraphqlRequestFetch` | `GraphQLClient` `fetch` option                                                              |
+| `BufferPacingLink`          | Apollo link (`buffer-graphql-pacer/apollo`)                                                 |
+| `getState()`                | `queueDepth`, tokens, `pausedUntil`, `rateLimitRemaining`, `requestBuckets`, `pacingStatus` |
 
 Defaults match Buffer’s documented limit: **100 requests / 15 minutes**, **0.9 safety margin**.
+
+## Terminal dashboard (opt-in)
+
+The core limiter (`createBufferedFetch`, `BufferRateLimiter`) **never** shows a terminal UI. The dashboard is a separate optional layer — **disabled by default**.
+
+```typescript
+import { BufferRateLimiter, createBufferedFetch } from 'buffer-graphql-pacer'
+import { runPacedWork } from 'buffer-graphql-pacer/tui'
+
+const limiter = new BufferRateLimiter()
+const fetch = createBufferedFetch(limiter)
+
+// dashboard: false (default) — silent pacing for production scripts
+await runPacedWork(limiter, () => scheduleAllPosts(fetch), { dashboard: false })
+
+// dashboard: true — terminal UI for local dev or demos
+await runPacedWork(limiter, () => scheduleAllPosts(fetch), {
+  dashboard: true,
+  title: 'BUFFER RATE OPTIMIZER',
+  itemLabel: 'Posts',
+})
+```
+
+```bash
+# MSW demo (no API token — great for GIFs)
+pnpm example:dashboard
+FLOOD_COUNT=80 pnpm example:dashboard
+
+# Live read-only with dashboard (example script uses DASHBOARD=1)
+RUN_LIVE_TESTS=1 DASHBOARD=1 pnpm example:live:readonly
+```
+
+The equalizer bars spike during bursts and flatten when `RateLimit-Remaining` is low or the limiter pauses on HTTP 429.
 
 ## Testing strategy
 
@@ -126,10 +159,11 @@ pnpm test
 pnpm example:paced
 
 # Live read-only flood (consumes real quota)
-cp .env.example .env   # set token, url, RUN_LIVE_TESTS=1
-pnpm example:live:readonly
+cp .env.example .env   # set BUFFER_ACCESS_TOKEN, BUFFER_GRAPHQL_URL, RUN_LIVE_TESTS=1
+pnpm example:live:readonly   # npm script passes --env-file=.env to tsx
 FLOOD_MODE=unpaced pnpm example:live:readonly   # expect 429s
 FLOOD_MODE=paced pnpm example:live:readonly       # limiter absorbs burst
+DASHBOARD=1 pnpm example:live:readonly          # paced + terminal UI
 ```
 
 ## Development

@@ -13,10 +13,12 @@
     "sourceMap": true,
     "outDir": "dist",
     "rootDir": ".",
+    "jsx": "react-jsx",
     "types": ["node"]
   },
   "include": [
     "src/**/*.ts",
+    "src/**/*.tsx",
     "tests/**/*.ts",
     "examples/**/*.ts",
     "tsup.config.ts",
