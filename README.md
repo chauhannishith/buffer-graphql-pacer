@@ -236,8 +236,10 @@ Defaults match Buffer’s documented limit: **100 requests / 15 minutes**, **0.9
 | HTTP 5xx                       | Same backoff retries (request reached the server)                                           |
 | HTTP 4xx (except 401/429)      | Global pause + exponential retry (5 min → 24 h) on **first failure**; blocks the queue      |
 | HTTP 200 + GraphQL `errors`    | Same failure backoff (common for quota messages in the body)                                |
-| HTTP 401                       | Fail fast — no retry (auth will not recover with waiting)                                   |
+| HTTP 401                       | Fail fast on the first request, then **halt the batch** (remaining jobs skip without HTTP)  |
 | HTTP 429                       | Global pause + retry (unchanged)                                                            |
+
+`haltBatchOnFirstFailure` (default **true**) stops subsequent scheduled jobs after any non-retryable failure so you do not burn through 110 requests when quota is gone.
 
 `totalCompleted` tracks finished jobs; `totalSucceeded` / `totalFailed` and `httpStatusCounts` distinguish successes from failures. Disable with `failureBackoff: { enabled: false }` (alias: `quotaExhaustionBackoff`).
 

@@ -9,7 +9,7 @@
  *   RUN_LIVE_TESTS=1 FLOOD_MODE=unpaced pnpm example:live:readonly
  *   RUN_LIVE_TESTS=1 DASHBOARD=1 pnpm example:live:readonly
  */
-import { BufferRateLimiter, createBufferedFetch } from '../src/index'
+import { BufferRateLimiter, BatchHaltedError, createBufferedFetch } from '../src/index'
 import { runPacedWork } from '../src/tui/run-dashboard'
 import { buildAuthHeaders, getLiveBufferConfig } from './lib/live-env'
 
@@ -62,8 +62,32 @@ const runPaced = async (url: string, token: string): Promise<void> => {
   const limiter = new BufferRateLimiter()
   const bufferedFetch = createBufferedFetch(limiter)
 
-  const work = async (): Promise<Response[]> =>
-    Promise.all(Array.from({ length: FLOOD_COUNT }, () => postQuery(url, token, bufferedFetch)))
+  const work = async (): Promise<Response[]> => {
+    const results = await Promise.allSettled(
+      Array.from({ length: FLOOD_COUNT }, () => postQuery(url, token, bufferedFetch)),
+    )
+
+    const responses: Response[] = []
+    let halted = 0
+
+    for (const result of results) {
+      if (result.status === 'fulfilled') {
+        responses.push(result.value)
+        continue
+      }
+      if (result.reason instanceof BatchHaltedError) {
+        halted += 1
+        continue
+      }
+      throw result.reason
+    }
+
+    if (halted > 0) {
+      console.warn(`Batch halted after first failure — skipped ${halted} remaining requests`)
+    }
+
+    return responses
+  }
 
   if (USE_DASHBOARD) {
     await runPacedWork(limiter, work, {

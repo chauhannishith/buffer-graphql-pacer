@@ -32,6 +32,15 @@ export type PacingStatus = 'stable' | 'throttled' | 'paused'
 
 export type PauseReason = 'rate_limit' | 'failure' | null
 
+/** Thrown when later jobs are skipped after an earlier scheduled request failed. */
+export class BatchHaltedError extends Error {
+  readonly name = 'BatchHaltedError'
+
+  constructor(message = 'Batch halted after an earlier request failed') {
+    super(message)
+  }
+}
+
 export type BufferRateLimiterCallbacks = {
   onRequestStart?: () => void
   onRequestComplete?: (info: { completedAt: number }) => void
@@ -98,6 +107,8 @@ export type BufferRateLimiterState = {
   /** Count of finished HTTP responses keyed by status code. */
   httpStatusCounts: Record<string, number>
   pauseReason: PauseReason
+  /** True after the first non-retryable failure; remaining jobs are skipped. */
+  batchHalted: boolean
   inFlight: boolean
   requestsPerMinute: number
   pacingStatus: PacingStatus
@@ -139,6 +150,7 @@ export class BufferRateLimiter {
       | 'excludeStatuses'
       | 'includeGraphqlErrors'
       | 'includeServerErrors'
+      | 'haltBatchOnFirstFailure'
       | 'baseDelayMs'
       | 'maxDelayMs'
     >
@@ -151,6 +163,7 @@ export class BufferRateLimiter {
   private totalFailed = 0
   private readonly httpStatusCounts: Record<string, number> = {}
   private failureBackoffAttempt = 0
+  private batchHalted = false
   private pauseReason: PauseReason = null
   private inFlight = false
 
@@ -180,6 +193,7 @@ export class BufferRateLimiter {
         failureOptions.includeGraphqlErrors ?? FAILURE_BACKOFF_DEFAULTS.includeGraphqlErrors,
       includeServerErrors:
         failureOptions.includeServerErrors ?? FAILURE_BACKOFF_DEFAULTS.includeServerErrors,
+      haltBatchOnFirstFailure: failureOptions.haltBatchOnFirstFailure ?? true,
       baseDelayMs: failureOptions.baseDelayMs ?? FAILURE_BACKOFF_DEFAULTS.baseDelayMs,
       maxDelayMs: failureOptions.maxDelayMs ?? FAILURE_BACKOFF_DEFAULTS.maxDelayMs,
     }
@@ -234,6 +248,7 @@ export class BufferRateLimiter {
       totalFailed: this.totalFailed,
       httpStatusCounts: { ...this.httpStatusCounts },
       pauseReason: this.pauseReason,
+      batchHalted: this.batchHalted,
       inFlight: this.inFlight,
       requestsPerMinute: this.metrics.getRequestsPerMinute(now),
       pacingStatus: this.resolvePacingStatus(snapshot, pausedUntil, now),
@@ -270,6 +285,10 @@ export class BufferRateLimiter {
     let transientAttempts = 0
 
     while (true) {
+      if (this.batchHalted) {
+        throw new BatchHaltedError()
+      }
+
       const wasPaused = this.pauseGate.getPausedUntil() !== null
       await this.pauseGate.wait()
       if (wasPaused) {
@@ -306,6 +325,7 @@ export class BufferRateLimiter {
         }
 
         if (result.status === 401) {
+          this.markBatchHalted()
           this.finishHttpRequest(result.status)
           return result
         }
@@ -374,6 +394,7 @@ export class BufferRateLimiter {
       this.failureBackoffAttempt = 0
     } else {
       this.totalFailed += 1
+      this.markBatchHalted()
     }
 
     this.metrics.recordCompletion(completedAt)
@@ -412,5 +433,11 @@ export class BufferRateLimiter {
       status,
       graphql: info.graphql,
     })
+  }
+
+  private markBatchHalted(): void {
+    if (this.failureBackoff.haltBatchOnFirstFailure) {
+      this.batchHalted = true
+    }
   }
 }

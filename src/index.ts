@@ -6,6 +6,7 @@ export const PACKAGE_NAME = 'buffer-graphql-pacer' as const
 
 export {
   BUFFER_RATE_LIMIT_DEFAULTS,
+  BatchHaltedError,
   BufferRateLimiter,
   type BufferRateLimiterCallbacks,
   type BufferRateLimiterOptions,

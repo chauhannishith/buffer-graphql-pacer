@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { BUFFER_RATE_LIMIT_DEFAULTS, BufferRateLimiter } from '../src/limiter'
+import { BUFFER_RATE_LIMIT_DEFAULTS, BatchHaltedError, BufferRateLimiter } from '../src/limiter'
 
 const rateLimitHeaders = (remaining: string, reset = '2026-06-04T12:15:00.000Z') =>
   new Headers({
@@ -260,6 +260,35 @@ describe('BufferRateLimiter', () => {
     expect(firstAttempts).toBe(1)
     expect(secondAttempts).toBe(0)
     expect(limiter.getState().pauseReason).toBe('failure')
+  })
+
+  it('halts the batch after the first non-retryable failure', async () => {
+    const limiter = new BufferRateLimiter({
+      maxRequests: 10,
+      windowMs: 10_000,
+      safetyMargin: 1,
+      failureBackoff: { haltBatchOnFirstFailure: true },
+    })
+    let attempts = 0
+
+    const first = limiter.schedule(async () => {
+      attempts += 1
+      return new Response(null, { status: 401 })
+    })
+    const second = limiter.schedule(async () => new Response(null, { status: 200 }))
+    const third = limiter.schedule(async () => new Response(null, { status: 200 }))
+
+    const secondRejected = expect(second).rejects.toBeInstanceOf(BatchHaltedError)
+    const thirdRejected = expect(third).rejects.toBeInstanceOf(BatchHaltedError)
+
+    await vi.advanceTimersByTimeAsync(0)
+    await first
+    await secondRejected
+    await thirdRejected
+
+    expect(attempts).toBe(1)
+    expect(limiter.getState().totalFailed).toBe(1)
+    expect(limiter.getState().batchHalted).toBe(true)
   })
 
   it('backs off when HTTP 200 includes GraphQL errors', async () => {

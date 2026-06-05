@@ -18,6 +18,8 @@ export type FailureBackoffOptions = {
   excludeStatuses?: number[]
   includeGraphqlErrors?: boolean
   includeServerErrors?: boolean
+  /** Stop remaining queued jobs after the first non-retryable failure (default true). */
+  haltBatchOnFirstFailure?: boolean
   baseDelayMs?: number
   maxDelayMs?: number
 }
@@ -68,11 +70,6 @@ export const computeFailureBackoffMs = (
 export const computeQuotaBackoffMs = computeFailureBackoffMs
 
 export const responseHasGraphqlErrors = async (response: Response): Promise<boolean> => {
-  const contentType = response.headers.get('Content-Type') ?? ''
-  if (!contentType.includes('json')) {
-    return false
-  }
-
   try {
     const body = (await response.clone().json()) as { errors?: unknown[] }
     return Array.isArray(body.errors) && body.errors.length > 0
