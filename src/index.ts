@@ -7,9 +7,13 @@ export const PACKAGE_NAME = 'buffer-graphql-pacer' as const
 export {
   BUFFER_RATE_LIMIT_DEFAULTS,
   BufferRateLimiter,
+  type BufferRateLimiterCallbacks,
   type BufferRateLimiterOptions,
   type BufferRateLimiterState,
+  type PacingStatus,
 } from './limiter'
+
+export { RequestMetrics, type RequestMetricsOptions } from './telemetry/request-metrics'
 
 export { parseRetryAfterSeconds, PauseGate } from './backoff/retry-429'
 export {
