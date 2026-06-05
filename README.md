@@ -2,6 +2,8 @@
 
 Open-source **batching and pacing proxy** for [Buffer](https://buffer.com/)’s GraphQL API. Queue bursty traffic, stay under the rolling **100 requests / 15 minutes** limit, and recover from HTTP 429 without half-finished bulk jobs.
 
+**Repository:** [github.com/chauhannishith/buffer-graphql-pacer](https://github.com/chauhannishith/buffer-graphql-pacer)
+
 ![Live terminal dashboard — paced read-only flood against the Buffer GraphQL API](./docs/buffer.gif)
 
 ## The problem

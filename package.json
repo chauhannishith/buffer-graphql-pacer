@@ -65,8 +65,12 @@
   ],
   "repository": {
     "type": "git",
-    "url": "https://github.com/chauhannishith/buffer-api-limit.git"
+    "url": "https://github.com/chauhannishith/buffer-graphql-pacer.git"
   },
+  "bugs": {
+    "url": "https://github.com/chauhannishith/buffer-graphql-pacer/issues"
+  },
+  "homepage": "https://github.com/chauhannishith/buffer-graphql-pacer#readme",
   "peerDependencies": {
     "@apollo/client": "^3.8.0",
     "graphql-request": "^6.0.0 || ^7.0.0",

@@ -73,7 +73,7 @@ flowchart LR
     Script[Bulk script / cron / AI pipeline]
   end
 
-  subgraph lib [buffer-api-limit library]
+  subgraph lib [buffer-graphql-pacer library]
     Q[Request queue]
     TB[Token bucket / pacer]
     HL[Header listener]
@@ -106,7 +106,7 @@ flowchart LR
 ## 5. Repository Structure
 
 ```
-buffer-api-limit/
+buffer-graphql-pacer/
 ├── src/
 │   ├── index.ts                 # Public exports
 │   ├── limiter.ts               # BufferRateLimiter orchestration
@@ -547,7 +547,7 @@ What reviewers (including Buffer engineers) should see in 30 seconds:
 - [ ] Buffer account + API token (free tier sufficient per README)
 - [ ] Confirm current GraphQL endpoint and 429 JSON shape in official docs
 - [ ] Choose npm package name (check availability)
-- [ ] Create GitHub repo `buffer-api-limit` (or align name with npm)
+- [x] Create GitHub repo `buffer-graphql-pacer` (aligned with npm package name)
 - [ ] Add `.env.example` with `RUN_LIVE_TESTS=0` and `BUFFER_ACCESS_TOKEN`
 - [ ] Confirm `createIdea` and `organizations` field names in current Buffer GraphQL schema
 - [ ] Capture one redacted header fixture from Tier 2 for MSW alignment
