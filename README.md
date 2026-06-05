@@ -40,6 +40,15 @@ pnpm add buffer-graphql-pacer
 # or: npm install buffer-graphql-pacer
 ```
 
+**Not on npm yet?** Install from GitHub until the first release is published:
+
+```bash
+pnpm add github:chauhannishith/buffer-graphql-pacer
+# or: npm install github:chauhannishith/buffer-graphql-pacer
+```
+
+The `prepare` script builds `dist/` automatically during install — no manual build step on your side (first install may take a minute).
+
 Requires **Node.js 20+** (24 recommended for local dev — see `.nvmrc`).
 
 ## Quick start
@@ -99,6 +108,111 @@ For queue-only pacing without wrapping `fetch`:
 ```typescript
 import { BufferPacingLink } from 'buffer-graphql-pacer/apollo'
 ```
+
+## Production usage
+
+Use the library as an **in-process pacing layer** — not a standalone proxy service. One Node process, one shared limiter, all Buffer GraphQL traffic routed through it.
+
+### Checklist
+
+| Do                                                                          | Don't                                           |
+| --------------------------------------------------------------------------- | ----------------------------------------------- |
+| Create **one `BufferRateLimiter` per process** and reuse it                 | Spin up a new limiter per request               |
+| Use `createBufferedFetch(limiter)` or `limiter.schedule()`                  | Import `buffer-graphql-pacer/tui` in production |
+| Load `BUFFER_ACCESS_TOKEN` from env / secrets manager                       | Commit tokens or hard-code credentials          |
+| `await Promise.all([...])` and let the queue drain                          | Fire-and-forget without awaiting scheduled work |
+| Set `maxTransientRetries: 0` for **mutations** unless writes are idempotent | Blindly retry `createPost`-style calls          |
+| Log `limiter.getState()` or use callbacks on long jobs                      | Assume multi-server deployments share one quota |
+
+### Recommended pattern (cron, worker, script)
+
+```typescript
+import { BufferRateLimiter, createBufferedFetch } from 'buffer-graphql-pacer'
+
+const limiter = new BufferRateLimiter({
+  // Safer default for createPost / createIdea / other writes
+  maxTransientRetries: 0,
+  callbacks: {
+    onPause: ({ retryAfterSeconds }) => {
+      console.warn(`Buffer 429 — pausing ${retryAfterSeconds}s`)
+    },
+  },
+})
+
+const bufferFetch = createBufferedFetch(limiter)
+
+const graphqlUrl = process.env.BUFFER_GRAPHQL_URL!
+const token = process.env.BUFFER_ACCESS_TOKEN!
+
+export async function runBulkJob(items: unknown[]) {
+  const responses = await Promise.all(
+    items.map((item) =>
+      bufferFetch(graphqlUrl, {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${token}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ query: MUTATION, variables: { input: item } }),
+      }),
+    ),
+  )
+
+  const failed = responses.filter((response) => !response.ok)
+  if (failed.length > 0) {
+    throw new Error(`${failed.length} Buffer requests failed`)
+  }
+
+  return responses
+}
+```
+
+Schedule as many calls as you need up front — the limiter serializes execution and spaces requests. A job with 200 items may run for many minutes; that is expected.
+
+### graphql-request or Apollo in production
+
+```typescript
+import { GraphQLClient } from 'graphql-request'
+import { BufferRateLimiter, createGraphqlRequestFetch } from 'buffer-graphql-pacer'
+
+const limiter = new BufferRateLimiter({ maxTransientRetries: 0 })
+
+export const bufferClient = new GraphQLClient(process.env.BUFFER_GRAPHQL_URL!, {
+  fetch: createGraphqlRequestFetch(limiter),
+  headers: { Authorization: `Bearer ${process.env.BUFFER_ACCESS_TOKEN}` },
+})
+```
+
+Reuse `bufferClient` (and the same `limiter`) for the lifetime of the process.
+
+### Multiple servers or processes
+
+Each process has its **own** token bucket and queue. Two cron jobs on different machines each pace locally — they do **not** coordinate. Split work at the application layer, run one pacer per worker, or centralize Buffer calls through a single worker if you must stay under a shared account limit.
+
+### Observability
+
+```typescript
+const limiter = new BufferRateLimiter({
+  callbacks: {
+    onRateLimitHeaders: (snapshot) => {
+      console.info('RateLimit-Remaining', snapshot.remaining)
+    },
+    onTransientRetry: ({ reason, attempt, delayMs }) => {
+      console.warn(`Retry ${attempt} after ${reason}, waiting ${delayMs}ms`)
+    },
+  },
+})
+
+// Or poll during a long run
+console.info(limiter.getState())
+// queueDepth, rateLimitRemaining, pacingStatus, pausedUntil, …
+```
+
+### Known limits
+
+- **Rolling window:** Proactive pacing uses a token bucket (~90 req / 15 min with defaults), not a perfect sliding-window counter. Header sync and 429 handling cover the gap in most cases.
+- **Daily quota:** Buffer plans may enforce a separate daily cap (e.g. free tier). Exhausted daily quota returns errors before HTTP 429 — pacing cannot fix that.
+- **Live validation:** MSW tests cover burst and 429 recovery in CI. Soak-test against the real API when you have quota headroom (`pnpm example:live:readonly`).
 
 ## API surface
 
