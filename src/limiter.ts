@@ -1,9 +1,10 @@
 import { parseRetryAfterSeconds, PauseGate } from './backoff/retry-429'
 import {
-  computeQuotaBackoffMs,
-  isQuotaExhaustionStatus,
-  QUOTA_EXHAUSTION_DEFAULTS,
-  type QuotaExhaustionBackoffOptions,
+  computeFailureBackoffMs,
+  FAILURE_BACKOFF_DEFAULTS,
+  responseHasGraphqlErrors,
+  shouldFailureBackoff,
+  type FailureBackoffOptions,
 } from './backoff/quota-exhaustion'
 import {
   computeTransientBackoffMs,
@@ -29,7 +30,7 @@ export const BUFFER_RATE_LIMIT_DEFAULTS = {
 
 export type PacingStatus = 'stable' | 'throttled' | 'paused'
 
-export type PauseReason = 'rate_limit' | 'quota' | null
+export type PauseReason = 'rate_limit' | 'failure' | null
 
 export type BufferRateLimiterCallbacks = {
   onRequestStart?: () => void
@@ -44,11 +45,20 @@ export type BufferRateLimiterCallbacks = {
     error?: unknown
     status?: number
   }) => void
+  onFailureWait?: (info: {
+    attempt: number
+    delayMs: number
+    pausedUntil: number
+    status: number
+    graphql?: boolean
+  }) => void
+  /** @deprecated Use {@link BufferRateLimiterCallbacks.onFailureWait}. */
   onQuotaWait?: (info: {
     attempt: number
     delayMs: number
     pausedUntil: number
     status: number
+    graphql?: boolean
   }) => void
 }
 
@@ -64,8 +74,10 @@ export type BufferRateLimiterOptions = {
   maxTransientRetries?: number
   transientRetryBaseDelayMs?: number
   transientRetryMaxDelayMs?: number
-  /** Pause and retry when daily/plan quota responses are returned (default: HTTP 403). */
-  quotaExhaustionBackoff?: QuotaExhaustionBackoffOptions
+  /** Pause and retry on client failures (default: any 4xx except 401/429, GraphQL errors, exhausted 5xx). */
+  failureBackoff?: FailureBackoffOptions
+  /** @deprecated Use {@link BufferRateLimiterOptions.failureBackoff}. */
+  quotaExhaustionBackoff?: FailureBackoffOptions
   callbacks?: BufferRateLimiterCallbacks
 }
 
@@ -120,16 +132,25 @@ export class BufferRateLimiter {
   private readonly defaultRetryAfterSeconds: number
   private readonly maxTransientRetries: number
   private readonly transientBackoffOptions: TransientBackoffOptions
-  private readonly quotaExhaustionBackoff: Required<
-    Pick<QuotaExhaustionBackoffOptions, 'enabled' | 'statuses' | 'baseDelayMs' | 'maxDelayMs'>
-  >
+  private readonly failureBackoff: Required<
+    Pick<
+      FailureBackoffOptions,
+      | 'enabled'
+      | 'excludeStatuses'
+      | 'includeGraphqlErrors'
+      | 'includeServerErrors'
+      | 'baseDelayMs'
+      | 'maxDelayMs'
+    >
+  > &
+    Pick<FailureBackoffOptions, 'statuses'>
 
   private totalScheduled = 0
   private totalCompleted = 0
   private totalSucceeded = 0
   private totalFailed = 0
   private readonly httpStatusCounts: Record<string, number> = {}
-  private quotaBackoffAttempt = 0
+  private failureBackoffAttempt = 0
   private pauseReason: PauseReason = null
   private inFlight = false
 
@@ -148,14 +169,25 @@ export class BufferRateLimiter {
       baseDelayMs: options.transientRetryBaseDelayMs ?? TRANSIENT_RETRY_DEFAULTS.baseDelayMs,
       maxDelayMs: options.transientRetryMaxDelayMs ?? TRANSIENT_RETRY_DEFAULTS.maxDelayMs,
     }
-    const quotaOptions = options.quotaExhaustionBackoff ?? {}
-    this.quotaExhaustionBackoff = {
-      enabled: quotaOptions.enabled ?? true,
-      statuses: quotaOptions.statuses ?? [...QUOTA_EXHAUSTION_DEFAULTS.statuses],
-      baseDelayMs: quotaOptions.baseDelayMs ?? QUOTA_EXHAUSTION_DEFAULTS.baseDelayMs,
-      maxDelayMs: quotaOptions.maxDelayMs ?? QUOTA_EXHAUSTION_DEFAULTS.maxDelayMs,
+    const failureOptions = options.failureBackoff ?? options.quotaExhaustionBackoff ?? {}
+    this.failureBackoff = {
+      enabled: failureOptions.enabled ?? true,
+      statuses: failureOptions.statuses,
+      excludeStatuses: failureOptions.excludeStatuses ?? [
+        ...FAILURE_BACKOFF_DEFAULTS.excludeStatuses,
+      ],
+      includeGraphqlErrors:
+        failureOptions.includeGraphqlErrors ?? FAILURE_BACKOFF_DEFAULTS.includeGraphqlErrors,
+      includeServerErrors:
+        failureOptions.includeServerErrors ?? FAILURE_BACKOFF_DEFAULTS.includeServerErrors,
+      baseDelayMs: failureOptions.baseDelayMs ?? FAILURE_BACKOFF_DEFAULTS.baseDelayMs,
+      maxDelayMs: failureOptions.maxDelayMs ?? FAILURE_BACKOFF_DEFAULTS.maxDelayMs,
     }
-    this.callbacks = options.callbacks ?? {}
+    const rawCallbacks = options.callbacks ?? {}
+    this.callbacks = {
+      ...rawCallbacks,
+      onFailureWait: rawCallbacks.onFailureWait ?? rawCallbacks.onQuotaWait,
+    }
   }
 
   /**
@@ -165,7 +197,7 @@ export class BufferRateLimiter {
    * When the scheduled function returns a `Response`, the limiter:
    * - syncs pacing from `RateLimit-*` headers on success
    * - pauses and retries after HTTP 429 using `retryAfter`
-   * - pauses with exponential backoff (up to 24h) on quota exhaustion (default: HTTP 403)
+   * - pauses with exponential backoff (up to 24h) on the first hard failure (4xx except 401/429, GraphQL errors, 5xx)
    * - retries transient network errors and HTTP 5xx with exponential backoff
    */
   schedule<T>(fn: () => Promise<T>): Promise<T> {
@@ -273,25 +305,9 @@ export class BufferRateLimiter {
           continue
         }
 
-        if (
-          this.quotaExhaustionBackoff.enabled &&
-          isQuotaExhaustionStatus(result.status, this.quotaExhaustionBackoff.statuses)
-        ) {
-          const delayMs = computeQuotaBackoffMs(this.quotaBackoffAttempt, {
-            baseDelayMs: this.quotaExhaustionBackoff.baseDelayMs,
-            maxDelayMs: this.quotaExhaustionBackoff.maxDelayMs,
-          })
-          const pausedUntil = Date.now() + delayMs
-          this.pauseReason = 'quota'
-          this.pauseGate.pauseFor(delayMs)
-          this.quotaBackoffAttempt += 1
-          this.callbacks.onQuotaWait?.({
-            attempt: this.quotaBackoffAttempt,
-            delayMs,
-            pausedUntil,
-            status: result.status,
-          })
-          continue
+        if (result.status === 401) {
+          this.finishHttpRequest(result.status)
+          return result
         }
 
         if (isRetryableServerResponse(result) && transientAttempts < this.maxTransientRetries) {
@@ -304,6 +320,13 @@ export class BufferRateLimiter {
             status: result.status,
           })
           await delay(delayMs)
+          continue
+        }
+
+        if (this.failureBackoff.enabled && (await this.shouldBackoffForResponse(result))) {
+          await this.pauseForFailure(result.status, {
+            graphql: result.status >= 200 && result.status < 300,
+          })
           continue
         }
 
@@ -348,12 +371,46 @@ export class BufferRateLimiter {
 
     if (status >= 200 && status < 300) {
       this.totalSucceeded += 1
-      this.quotaBackoffAttempt = 0
+      this.failureBackoffAttempt = 0
     } else {
       this.totalFailed += 1
     }
 
     this.metrics.recordCompletion(completedAt)
     this.callbacks.onRequestComplete?.({ completedAt })
+  }
+
+  private async shouldBackoffForResponse(response: Response): Promise<boolean> {
+    if (shouldFailureBackoff(response.status, this.failureBackoff)) {
+      return true
+    }
+
+    if (
+      response.status >= 200 &&
+      response.status < 300 &&
+      this.failureBackoff.includeGraphqlErrors
+    ) {
+      return responseHasGraphqlErrors(response)
+    }
+
+    return false
+  }
+
+  private async pauseForFailure(status: number, info: { graphql?: boolean }): Promise<void> {
+    const delayMs = computeFailureBackoffMs(this.failureBackoffAttempt, {
+      baseDelayMs: this.failureBackoff.baseDelayMs,
+      maxDelayMs: this.failureBackoff.maxDelayMs,
+    })
+    const pausedUntil = Date.now() + delayMs
+    this.pauseReason = 'failure'
+    this.pauseGate.pauseFor(delayMs)
+    this.failureBackoffAttempt += 1
+    this.callbacks.onFailureWait?.({
+      attempt: this.failureBackoffAttempt,
+      delayMs,
+      pausedUntil,
+      status,
+      graphql: info.graphql,
+    })
   }
 }

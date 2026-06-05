@@ -234,11 +234,12 @@ Defaults match Buffer’s documented limit: **100 requests / 15 minutes**, **0.9
 | ------------------------------ | ------------------------------------------------------------------------------------------- |
 | Network error (`fetch` throws) | Up to 3 retries with exponential backoff; **token refunded** (request never reached Buffer) |
 | HTTP 5xx                       | Same backoff retries (request reached the server)                                           |
-| HTTP 403 (daily/plan quota)    | Global pause + exponential retry (5 min → 24 h cap per wait)                                |
-| HTTP 4xx (except 429/403)      | Fail fast — no retry; counted in `httpStatusCounts`                                         |
+| HTTP 4xx (except 401/429)      | Global pause + exponential retry (5 min → 24 h) on **first failure**; blocks the queue      |
+| HTTP 200 + GraphQL `errors`    | Same failure backoff (common for quota messages in the body)                                |
+| HTTP 401                       | Fail fast — no retry (auth will not recover with waiting)                                   |
 | HTTP 429                       | Global pause + retry (unchanged)                                                            |
 
-`totalCompleted` tracks finished jobs; `totalSucceeded` / `totalFailed` and `httpStatusCounts` distinguish HTTP 200 from 403/401/etc. Disable quota waits with `quotaExhaustionBackoff: { enabled: false }`.
+`totalCompleted` tracks finished jobs; `totalSucceeded` / `totalFailed` and `httpStatusCounts` distinguish successes from failures. Disable with `failureBackoff: { enabled: false }` (alias: `quotaExhaustionBackoff`).
 
 Buffer mutations may not be idempotent — use retries cautiously on write operations, or disable with `maxTransientRetries: 0`.
 

@@ -25,9 +25,14 @@ export {
   type TransientBackoffOptions,
 } from './backoff/retry-transient'
 export {
+  computeFailureBackoffMs,
   computeQuotaBackoffMs,
+  FAILURE_BACKOFF_DEFAULTS,
   isQuotaExhaustionStatus,
   QUOTA_EXHAUSTION_DEFAULTS,
+  responseHasGraphqlErrors,
+  shouldFailureBackoff,
+  type FailureBackoffOptions,
   type QuotaExhaustionBackoffOptions,
 } from './backoff/quota-exhaustion'
 export {

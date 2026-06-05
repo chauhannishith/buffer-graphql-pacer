@@ -29,7 +29,7 @@ describe('tui format helpers', () => {
   it('formats http status summaries and pause reasons', () => {
     expect(formatHttpStatusSummary({ '200': 3, '403': 2 })).toBe('200×3, 403×2')
     expect(formatHttpStatusSummary({})).toBe('--')
-    expect(formatPauseReason('quota')).toBe('QUOTA WAIT')
+    expect(formatPauseReason('failure')).toBe('FAILURE WAIT')
     expect(formatPauseReason(null)).toBe('--')
   })
 

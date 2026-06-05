@@ -39,8 +39,8 @@ export const formatHttpStatusSummary = (counts: Record<string, number>): string 
 }
 
 export const formatPauseReason = (reason: string | null): string => {
-  if (reason === 'quota') {
-    return 'QUOTA WAIT'
+  if (reason === 'failure') {
+    return 'FAILURE WAIT'
   }
   if (reason === 'rate_limit') {
     return 'RATE LIMIT'
