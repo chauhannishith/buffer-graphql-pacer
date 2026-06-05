@@ -105,8 +105,29 @@ import { BufferPacingLink } from 'buffer-graphql-pacer/apollo'
 | `createGraphqlRequestFetch` | `GraphQLClient` `fetch` option                                                              |
 | `BufferPacingLink`          | Apollo link (`buffer-graphql-pacer/apollo`)                                                 |
 | `getState()`                | `queueDepth`, tokens, `pausedUntil`, `rateLimitRemaining`, `requestBuckets`, `pacingStatus` |
+| `estimateQueryComplexity`   | AST-based Buffer-style complexity score for a query string                                    |
 
 Defaults match Buffer’s documented limit: **100 requests / 15 minutes**, **0.9 safety margin**.
+
+### Query complexity estimator
+
+Buffer also scores queries by field complexity (scalars, nested objects, depth). Use the estimator to compare queries before sending bursty traffic:
+
+```typescript
+import { estimateQueryComplexity } from 'buffer-graphql-pacer'
+
+const cost = estimateQueryComplexity(`
+  query GetOrgMetaData {
+    organizations {
+      id
+      name
+    }
+  }
+`)
+// cost ≈ 5 — heavier queries can be split or deferred in your app layer
+```
+
+The limiter still paces **one HTTP request per `schedule` call**; complexity scoring is advisory until you wire it into your own budgeting logic.
 
 ## Terminal dashboard (opt-in)
 

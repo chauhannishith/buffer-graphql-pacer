@@ -27,3 +27,9 @@ export { TokenBucket, type TokenBucketOptions } from './queue/token-bucket'
 
 export { createBufferedFetch, type BufferedFetchOptions } from './adapters/fetch'
 export { createGraphqlRequestFetch } from './adapters/graphql-request'
+
+export {
+  estimateQueryComplexity,
+  tryEstimateQueryComplexity,
+  type ComplexityEstimatorOptions,
+} from './parser'
