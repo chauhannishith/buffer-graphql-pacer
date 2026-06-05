@@ -98,15 +98,30 @@ import { BufferPacingLink } from 'buffer-graphql-pacer/apollo'
 
 ## API surface
 
-| Export                      | Purpose                                                   |
-| --------------------------- | --------------------------------------------------------- |
-| `BufferRateLimiter`         | `schedule(fn)` — core queue + pacing                      |
-| `createBufferedFetch`       | Drop-in paced `fetch`                                     |
-| `createGraphqlRequestFetch` | `GraphQLClient` `fetch` option                            |
-| `BufferPacingLink`          | Apollo link (`buffer-graphql-pacer/apollo`)               |
-| `getState()`                | `queueDepth`, tokens, `pausedUntil`, `rateLimitRemaining` |
+| Export                      | Purpose                                                                                     |
+| --------------------------- | ------------------------------------------------------------------------------------------- |
+| `BufferRateLimiter`         | `schedule(fn)` — core queue + pacing                                                        |
+| `createBufferedFetch`       | Drop-in paced `fetch`                                                                       |
+| `createGraphqlRequestFetch` | `GraphQLClient` `fetch` option                                                              |
+| `BufferPacingLink`          | Apollo link (`buffer-graphql-pacer/apollo`)                                                 |
+| `getState()`                | `queueDepth`, tokens, `pausedUntil`, `rateLimitRemaining`, `requestBuckets`, `pacingStatus` |
 
 Defaults match Buffer’s documented limit: **100 requests / 15 minutes**, **0.9 safety margin**.
+
+## Terminal dashboard
+
+Ink-powered TUI for demos and live runs — progress bar, Buffer telemetry, and a rolling request-frequency equalizer.
+
+```bash
+# MSW demo (no API token — great for GIFs)
+pnpm example:dashboard
+FLOOD_COUNT=80 pnpm example:dashboard
+
+# Live read-only with dashboard
+RUN_LIVE_TESTS=1 DASHBOARD=1 pnpm example:live:readonly
+```
+
+The equalizer bars spike during bursts and flatten when `RateLimit-Remaining` is low or the limiter pauses on HTTP 429.
 
 ## Testing strategy
 
@@ -130,6 +145,7 @@ cp .env.example .env   # set token, url, RUN_LIVE_TESTS=1
 pnpm example:live:readonly
 FLOOD_MODE=unpaced pnpm example:live:readonly   # expect 429s
 FLOOD_MODE=paced pnpm example:live:readonly       # limiter absorbs burst
+DASHBOARD=1 pnpm example:live:readonly          # paced + terminal UI
 ```
 
 ## Development
