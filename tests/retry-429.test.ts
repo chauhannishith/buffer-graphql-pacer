@@ -31,6 +31,17 @@ describe('PauseGate', () => {
 
     expect(gate.getPausedUntil()).toBe(Date.now() + 5_000)
   })
+
+  it('unblocks wait immediately when aborted', async () => {
+    const gate = new PauseGate()
+    gate.pauseFor(60_000)
+
+    const waitPromise = gate.wait()
+    gate.abort()
+    await waitPromise
+
+    expect(gate.getPausedUntil()).toBeNull()
+  })
 })
 
 describe('parseRetryAfterSeconds', () => {

@@ -41,6 +41,28 @@ export class BatchHaltedError extends Error {
   }
 }
 
+/** Thrown when {@link BufferRateLimiter.abort} or SIGINT/q stops a run. */
+export class LimiterAbortedError extends Error {
+  readonly name = 'LimiterAbortedError'
+
+  constructor(message = 'Rate limiter run aborted') {
+    super(message)
+  }
+}
+
+/** Thrown when failure backoff exhausts {@link FailureBackoffOptions.maxFailureAttempts}. */
+export class FailureBackoffExhaustedError extends Error {
+  readonly name = 'FailureBackoffExhaustedError'
+
+  constructor(
+    readonly attempts: number,
+    readonly status: number,
+    message?: string,
+  ) {
+    super(message ?? `Failure backoff exhausted after ${attempts} attempts (HTTP ${status})`)
+  }
+}
+
 export type BufferRateLimiterCallbacks = {
   onRequestStart?: () => void
   onRequestComplete?: (info: { completedAt: number }) => void
@@ -116,6 +138,22 @@ export type BufferRateLimiterState = {
   requestBuckets: number[]
 }
 
+type ResolvedFailureBackoff = Required<
+  Pick<
+    FailureBackoffOptions,
+    | 'enabled'
+    | 'excludeStatuses'
+    | 'includeGraphqlErrors'
+    | 'includeServerErrors'
+    | 'haltBatchOnFirstFailure'
+    | 'baseDelayMs'
+    | 'maxDelayMs'
+  >
+> & {
+  statuses?: number[]
+  maxFailureAttempts?: number
+}
+
 const delay = (ms: number): Promise<void> =>
   new Promise((resolve) => {
     setTimeout(resolve, ms)
@@ -143,19 +181,7 @@ export class BufferRateLimiter {
   private readonly defaultRetryAfterSeconds: number
   private readonly maxTransientRetries: number
   private readonly transientBackoffOptions: TransientBackoffOptions
-  private readonly failureBackoff: Required<
-    Pick<
-      FailureBackoffOptions,
-      | 'enabled'
-      | 'excludeStatuses'
-      | 'includeGraphqlErrors'
-      | 'includeServerErrors'
-      | 'haltBatchOnFirstFailure'
-      | 'baseDelayMs'
-      | 'maxDelayMs'
-    >
-  > &
-    Pick<FailureBackoffOptions, 'statuses'>
+  private readonly failureBackoff: ResolvedFailureBackoff
 
   private totalScheduled = 0
   private totalCompleted = 0
@@ -164,6 +190,7 @@ export class BufferRateLimiter {
   private readonly httpStatusCounts: Record<string, number> = {}
   private failureBackoffAttempt = 0
   private batchHalted = false
+  private aborted = false
   private pauseReason: PauseReason = null
   private inFlight = false
 
@@ -185,7 +212,6 @@ export class BufferRateLimiter {
     const failureOptions = options.failureBackoff ?? options.quotaExhaustionBackoff ?? {}
     this.failureBackoff = {
       enabled: failureOptions.enabled ?? true,
-      statuses: failureOptions.statuses,
       excludeStatuses: failureOptions.excludeStatuses ?? [
         ...FAILURE_BACKOFF_DEFAULTS.excludeStatuses,
       ],
@@ -196,11 +222,16 @@ export class BufferRateLimiter {
       haltBatchOnFirstFailure: failureOptions.haltBatchOnFirstFailure ?? true,
       baseDelayMs: failureOptions.baseDelayMs ?? FAILURE_BACKOFF_DEFAULTS.baseDelayMs,
       maxDelayMs: failureOptions.maxDelayMs ?? FAILURE_BACKOFF_DEFAULTS.maxDelayMs,
+      ...(failureOptions.statuses !== undefined ? { statuses: failureOptions.statuses } : {}),
+      ...(failureOptions.maxFailureAttempts !== undefined
+        ? { maxFailureAttempts: failureOptions.maxFailureAttempts }
+        : {}),
     }
     const rawCallbacks = options.callbacks ?? {}
+    const onFailureWait = rawCallbacks.onFailureWait ?? rawCallbacks.onQuotaWait
     this.callbacks = {
       ...rawCallbacks,
-      onFailureWait: rawCallbacks.onFailureWait ?? rawCallbacks.onQuotaWait,
+      ...(onFailureWait !== undefined ? { onFailureWait } : {}),
     }
   }
 
@@ -227,6 +258,13 @@ export class BufferRateLimiter {
       return
     }
     this.syncHeaders(response.headers)
+  }
+
+  /** Stop in-flight and pending work (SIGINT, dashboard q, manual cancel). */
+  abort(): void {
+    this.aborted = true
+    this.batchHalted = true
+    this.pauseGate.abort()
   }
 
   getState(): BufferRateLimiterState {
@@ -285,6 +323,7 @@ export class BufferRateLimiter {
     let transientAttempts = 0
 
     while (true) {
+      this.throwIfAborted()
       if (this.batchHalted) {
         throw new BatchHaltedError()
       }
@@ -298,7 +337,7 @@ export class BufferRateLimiter {
 
       const headerDelay = this.headerTracker.getRecommendedDelayMs()
       if (headerDelay > 0) {
-        await delay(headerDelay)
+        await this.interruptibleDelay(headerDelay)
       }
 
       await this.bucket.acquire()
@@ -339,11 +378,15 @@ export class BufferRateLimiter {
             delayMs,
             status: result.status,
           })
-          await delay(delayMs)
+          await this.interruptibleDelay(delayMs)
           continue
         }
 
         if (this.failureBackoff.enabled && (await this.shouldBackoffForResponse(result))) {
+          if (this.isFailureAttemptsExhausted()) {
+            this.markBatchHalted()
+            throw new FailureBackoffExhaustedError(this.failureBackoffAttempt, result.status)
+          }
           await this.pauseForFailure(result.status, {
             graphql: result.status >= 200 && result.status < 300,
           })
@@ -364,7 +407,7 @@ export class BufferRateLimiter {
             delayMs,
             error,
           })
-          await delay(delayMs)
+          await this.interruptibleDelay(delayMs)
           continue
         }
 
@@ -431,13 +474,36 @@ export class BufferRateLimiter {
       delayMs,
       pausedUntil,
       status,
-      graphql: info.graphql,
+      ...(info.graphql !== undefined ? { graphql: info.graphql } : {}),
     })
   }
 
   private markBatchHalted(): void {
     if (this.failureBackoff.haltBatchOnFirstFailure) {
       this.batchHalted = true
+    }
+  }
+
+  private throwIfAborted(): void {
+    if (this.aborted) {
+      throw new LimiterAbortedError()
+    }
+  }
+
+  private isFailureAttemptsExhausted(): boolean {
+    return (
+      this.failureBackoff.maxFailureAttempts !== undefined &&
+      this.failureBackoffAttempt >= this.failureBackoff.maxFailureAttempts
+    )
+  }
+
+  private async interruptibleDelay(ms: number): Promise<void> {
+    const stepMs = 250
+    let remainingMs = ms
+    while (remainingMs > 0) {
+      this.throwIfAborted()
+      await delay(Math.min(remainingMs, stepMs))
+      remainingMs -= stepMs
     }
   }
 }

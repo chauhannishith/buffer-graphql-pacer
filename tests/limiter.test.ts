@@ -1,5 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { BUFFER_RATE_LIMIT_DEFAULTS, BatchHaltedError, BufferRateLimiter } from '../src/limiter'
+import {
+  BUFFER_RATE_LIMIT_DEFAULTS,
+  BatchHaltedError,
+  BufferRateLimiter,
+  FailureBackoffExhaustedError,
+  LimiterAbortedError,
+} from '../src/limiter'
 
 const rateLimitHeaders = (remaining: string, reset = '2026-06-04T12:15:00.000Z') =>
   new Headers({
@@ -369,5 +375,51 @@ describe('BufferRateLimiter', () => {
     await second
 
     expect(timestamps[0]).toBeGreaterThanOrEqual(30_000)
+  })
+
+  it('aborts a job blocked on failure backoff', async () => {
+    const limiter = new BufferRateLimiter({
+      failureBackoff: { baseDelayMs: 60_000, maxDelayMs: 60_000, haltBatchOnFirstFailure: false },
+    })
+    let attempts = 0
+
+    const resultPromise = limiter.schedule(async () => {
+      attempts += 1
+      return new Response(null, { status: 403 })
+    })
+
+    await vi.advanceTimersByTimeAsync(0)
+    expect(attempts).toBe(1)
+
+    limiter.abort()
+    await expect(resultPromise).rejects.toBeInstanceOf(LimiterAbortedError)
+  })
+
+  it('throws when failure backoff hits maxFailureAttempts', async () => {
+    const limiter = new BufferRateLimiter({
+      failureBackoff: {
+        baseDelayMs: 1_000,
+        maxDelayMs: 1_000,
+        maxFailureAttempts: 2,
+        haltBatchOnFirstFailure: false,
+      },
+    })
+    let attempts = 0
+
+    const resultPromise = limiter.schedule(async () => {
+      attempts += 1
+      return new Response(null, { status: 403 })
+    })
+    const rejection = expect(resultPromise).rejects.toBeInstanceOf(FailureBackoffExhaustedError)
+
+    await vi.advanceTimersByTimeAsync(0)
+    expect(attempts).toBe(1)
+
+    await vi.advanceTimersByTimeAsync(1_000)
+    expect(attempts).toBe(2)
+
+    await vi.advanceTimersByTimeAsync(1_000)
+    await rejection
+    expect(attempts).toBe(3)
   })
 })

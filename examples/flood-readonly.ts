@@ -9,7 +9,13 @@
  *   RUN_LIVE_TESTS=1 FLOOD_MODE=unpaced pnpm example:live:readonly
  *   RUN_LIVE_TESTS=1 DASHBOARD=1 pnpm example:live:readonly
  */
-import { BufferRateLimiter, BatchHaltedError, createBufferedFetch } from '../src/index'
+import {
+  BufferRateLimiter,
+  BatchHaltedError,
+  FailureBackoffExhaustedError,
+  LimiterAbortedError,
+  createBufferedFetch,
+} from '../src/index'
 import { runPacedWork } from '../src/tui/run-dashboard'
 import { buildAuthHeaders, getLiveBufferConfig } from './lib/live-env'
 
@@ -25,6 +31,9 @@ const ORG_QUERY = `
 const FLOOD_COUNT = Number(process.env.FLOOD_COUNT ?? 110)
 const FLOOD_MODE = (process.env.FLOOD_MODE ?? 'paced') as 'paced' | 'unpaced'
 const USE_DASHBOARD = process.env.DASHBOARD === '1'
+const FAILURE_MAX_ATTEMPTS = process.env.FAILURE_MAX_ATTEMPTS
+  ? Number(process.env.FAILURE_MAX_ATTEMPTS)
+  : undefined
 
 const postQuery = async (url: string, token: string, fetchImpl: typeof fetch): Promise<Response> =>
   fetchImpl(url, {
@@ -59,7 +68,11 @@ const runUnpaced = async (url: string, token: string): Promise<void> => {
 }
 
 const runPaced = async (url: string, token: string): Promise<void> => {
-  const limiter = new BufferRateLimiter()
+  const limiter = new BufferRateLimiter({
+    ...(FAILURE_MAX_ATTEMPTS !== undefined && !Number.isNaN(FAILURE_MAX_ATTEMPTS)
+      ? { failureBackoff: { maxFailureAttempts: FAILURE_MAX_ATTEMPTS } }
+      : {}),
+  })
   const bufferedFetch = createBufferedFetch(limiter)
 
   const work = async (): Promise<Response[]> => {
@@ -68,44 +81,60 @@ const runPaced = async (url: string, token: string): Promise<void> => {
     )
 
     const responses: Response[] = []
-    let halted = 0
+    let skipped = 0
 
     for (const result of results) {
       if (result.status === 'fulfilled') {
         responses.push(result.value)
         continue
       }
-      if (result.reason instanceof BatchHaltedError) {
-        halted += 1
+      if (
+        result.reason instanceof BatchHaltedError ||
+        result.reason instanceof LimiterAbortedError ||
+        result.reason instanceof FailureBackoffExhaustedError
+      ) {
+        skipped += 1
         continue
       }
       throw result.reason
     }
 
-    if (halted > 0) {
-      console.warn(`Batch halted after first failure — skipped ${halted} remaining requests`)
+    if (skipped > 0) {
+      console.warn(`Skipped ${skipped} requests (batch halt, abort, or backoff exhausted)`)
     }
 
     return responses
   }
 
-  if (USE_DASHBOARD) {
-    await runPacedWork(limiter, work, {
-      dashboard: true,
-      title: 'BUFFER RATE OPTIMIZER',
-      itemLabel: 'Requests',
-    })
-    return
+  if (!USE_DASHBOARD) {
+    console.log(`Paced: scheduling ${FLOOD_COUNT} read-only requests through the limiter`)
   }
 
-  console.log(`Paced: scheduling ${FLOOD_COUNT} read-only requests through the limiter`)
   const started = Date.now()
-  const responses = await work()
-  console.log({
-    elapsedMs: Date.now() - started,
-    ...summarize(responses),
-    limiterState: limiter.getState(),
-  })
+  let responses: Response[] = []
+
+  await runPacedWork(
+    limiter,
+    async () => {
+      responses = await work()
+    },
+    {
+      dashboard: USE_DASHBOARD
+        ? {
+            title: 'BUFFER RATE OPTIMIZER',
+            itemLabel: 'Requests',
+          }
+        : false,
+    },
+  )
+
+  if (!USE_DASHBOARD) {
+    console.log({
+      elapsedMs: Date.now() - started,
+      ...summarize(responses),
+      limiterState: limiter.getState(),
+    })
+  }
 }
 
 const main = async (): Promise<void> => {

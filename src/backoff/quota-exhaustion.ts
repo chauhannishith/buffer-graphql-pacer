@@ -20,6 +20,8 @@ export type FailureBackoffOptions = {
   includeServerErrors?: boolean
   /** Stop remaining queued jobs after the first non-retryable failure (default true). */
   haltBatchOnFirstFailure?: boolean
+  /** Max failure backoffs per job before giving up (default: unlimited). */
+  maxFailureAttempts?: number
   baseDelayMs?: number
   maxDelayMs?: number
 }

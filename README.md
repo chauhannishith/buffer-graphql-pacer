@@ -241,6 +241,8 @@ Defaults match Buffer’s documented limit: **100 requests / 15 minutes**, **0.9
 
 `haltBatchOnFirstFailure` (default **true**) stops subsequent scheduled jobs after any non-retryable failure so you do not burn through 110 requests when quota is gone.
 
+`maxFailureAttempts` caps how many failure backoffs a single job will take before throwing `FailureBackoffExhaustedError` (default: unlimited). Use it when daily quota is gone and you want the run to stop instead of backing off for hours.
+
 `totalCompleted` tracks finished jobs; `totalSucceeded` / `totalFailed` and `httpStatusCounts` distinguish successes from failures. Disable with `failureBackoff: { enabled: false }` (alias: `quotaExhaustionBackoff`).
 
 Buffer mutations may not be idempotent — use retries cautiously on write operations, or disable with `maxTransientRetries: 0`.
@@ -277,6 +279,8 @@ RUN_LIVE_TESTS=1 DASHBOARD=1 pnpm example:live:readonly
 ```
 
 The equalizer bars spike during bursts and flatten when `RateLimit-Remaining` is low or the limiter pauses on HTTP 429.
+
+While the dashboard is open, press **`q`** to stop (calls `limiter.abort()`). **Ctrl+C** does the same via `registerLimiterShutdown` / `runPacedWork`. Both unblock long failure-backoff waits so you are not stuck for minutes.
 
 ## Testing strategy
 

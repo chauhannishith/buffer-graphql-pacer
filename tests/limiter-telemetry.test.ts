@@ -1,11 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { BufferRateLimiter } from '../src/limiter'
 
-const rateLimitHeaders = (remaining: string) =>
+const rateLimitHeaders = (remaining: string, reset = '2026-01-01T00:01:00.000Z') =>
   new Headers({
     'RateLimit-Limit': '100',
     'RateLimit-Remaining': remaining,
-    'RateLimit-Reset': '2026-06-04T12:15:00.000Z',
+    'RateLimit-Reset': reset,
   })
 
 describe('BufferRateLimiter telemetry', () => {
@@ -55,19 +55,26 @@ describe('BufferRateLimiter telemetry', () => {
   })
 
   it('reports pacingStatus paused throttled and stable', async () => {
-    const limiter = new BufferRateLimiter({
+    const throttledLimiter = new BufferRateLimiter({
       maxRequests: 10,
       windowMs: 10_000,
       safetyMargin: 1,
       lowWatermark: 5,
     })
 
-    expect(limiter.getState().pacingStatus).toBe('stable')
-
-    await limiter.schedule(async () => {
+    await throttledLimiter.schedule(async () => {
       return new Response(null, { status: 200, headers: rateLimitHeaders('3') })
     })
-    expect(limiter.getState().pacingStatus).toBe('throttled')
+    expect(throttledLimiter.getState().pacingStatus).toBe('throttled')
+
+    const limiter = new BufferRateLimiter({
+      maxRequests: 10,
+      windowMs: 10_000,
+      safetyMargin: 1,
+      lowWatermark: 0,
+    })
+
+    expect(limiter.getState().pacingStatus).toBe('stable')
 
     let attempts = 0
     const promise = limiter.schedule(async () => {
@@ -81,9 +88,9 @@ describe('BufferRateLimiter telemetry', () => {
       return new Response(null, { status: 200, headers: rateLimitHeaders('50') })
     })
 
-    await vi.waitFor(() => {
-      expect(limiter.getState().pacingStatus).toBe('paused')
-    })
+    await vi.advanceTimersByTimeAsync(0)
+    expect(limiter.getState().pacingStatus).toBe('paused')
+    expect(attempts).toBe(1)
 
     await vi.advanceTimersByTimeAsync(5_000)
     await promise

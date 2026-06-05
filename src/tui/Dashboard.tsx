@@ -1,4 +1,4 @@
-import { Box, Text } from 'ink'
+import { Box, Text, useInput } from 'ink'
 import React, { useEffect, useState } from 'react'
 import type { BufferRateLimiter } from '../limiter'
 import { ProgressBar } from './components/ProgressBar'
@@ -9,14 +9,22 @@ type DashboardProps = {
   limiter: BufferRateLimiter
   title?: string
   itemLabel?: string
+  onQuit?: () => void
 }
 
 export const Dashboard = ({
   limiter,
   title = 'BUFFER RATE OPTIMIZER',
   itemLabel = 'Posts',
+  onQuit,
 }: DashboardProps): React.JSX.Element => {
   const [tick, setTick] = useState(0)
+
+  useInput((input) => {
+    if (input === 'q') {
+      onQuit?.()
+    }
+  })
 
   useEffect(() => {
     const interval = setInterval(() => {
@@ -43,6 +51,7 @@ export const Dashboard = ({
       <TelemetryPanel state={state} />
       <RequestEqualizer buckets={state.requestBuckets} />
       {state.inFlight ? <Text dimColor>▸ request in flight…</Text> : null}
+      <Text dimColor>Press q to stop · Ctrl+C also exits</Text>
     </Box>
   )
 }
