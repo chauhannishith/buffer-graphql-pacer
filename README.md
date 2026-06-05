@@ -159,8 +159,8 @@ pnpm test
 pnpm example:paced
 
 # Live read-only flood (consumes real quota)
-cp .env.example .env   # set token, url, RUN_LIVE_TESTS=1
-pnpm example:live:readonly
+cp .env.example .env   # set BUFFER_ACCESS_TOKEN, BUFFER_GRAPHQL_URL, RUN_LIVE_TESTS=1
+pnpm example:live:readonly   # npm script passes --env-file=.env to tsx
 FLOOD_MODE=unpaced pnpm example:live:readonly   # expect 429s
 FLOOD_MODE=paced pnpm example:live:readonly       # limiter absorbs burst
 DASHBOARD=1 pnpm example:live:readonly          # paced + terminal UI
