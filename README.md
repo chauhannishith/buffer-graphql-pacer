@@ -234,12 +234,12 @@ Defaults match Buffer’s documented limit: **100 requests / 15 minutes**, **0.9
 | ------------------------------ | ------------------------------------------------------------------------------------------- |
 | Network error (`fetch` throws) | Up to 3 retries with exponential backoff; **token refunded** (request never reached Buffer) |
 | HTTP 5xx                       | Same backoff retries (request reached the server)                                           |
-| HTTP 4xx (except 401/429)      | Global pause + exponential retry (5 min → 24 h) on **first failure**; blocks the queue      |
-| HTTP 200 + GraphQL `errors`    | Same failure backoff (common for quota messages in the body)                                |
-| HTTP 401                       | Fail fast on the first request, then **halt the batch** (remaining jobs skip without HTTP)  |
-| HTTP 429                       | Global pause + retry (unchanged)                                                            |
+| HTTP 4xx (except 429)          | Global pause + exponential retry (5 min → 24 h); blocks the queue until retry |
+| HTTP 200 + GraphQL `errors`    | Same failure backoff (common for quota messages in the body)                |
+| HTTP 401                       | Same failure backoff (queue blocks — remaining jobs wait, not skipped)      |
+| HTTP 429                       | Global pause + retry (unchanged)                                            |
 
-`haltBatchOnFirstFailure` (default **true**) stops subsequent scheduled jobs after any non-retryable failure so you do not burn through 110 requests when quota is gone.
+`haltBatchOnFirstFailure` (default **true**) stops subsequent scheduled jobs only after a **terminal** failure (backoff disabled or exhausted). While a job is backing off, the queue waits and later jobs do not run yet.
 
 `maxFailureAttempts` caps how many failure backoffs a single job will take before throwing `FailureBackoffExhaustedError` (default: unlimited). Use it when daily quota is gone and you want the run to stop instead of backing off for hours.
 

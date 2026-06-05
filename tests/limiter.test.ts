@@ -194,10 +194,37 @@ describe('BufferRateLimiter', () => {
     expect(result.status).toBe(200)
   })
 
-  it('does not retry HTTP 401 and records failure status', async () => {
+  it('pauses with failure backoff on HTTP 401 and retries', async () => {
+    const limiter = new BufferRateLimiter({
+      failureBackoff: { baseDelayMs: 60_000, maxDelayMs: 60_000 },
+    })
+    let attempts = 0
+
+    const resultPromise = limiter.schedule(async () => {
+      attempts += 1
+      if (attempts === 1) {
+        return new Response(null, { status: 401 })
+      }
+      return new Response(null, { status: 200, headers: rateLimitHeaders('10') })
+    })
+
+    await vi.advanceTimersByTimeAsync(0)
+    expect(attempts).toBe(1)
+    expect(limiter.getState().pauseReason).toBe('failure')
+    expect(limiter.getState().batchHalted).toBe(false)
+
+    await vi.advanceTimersByTimeAsync(60_000)
+    const result = await resultPromise
+
+    expect(attempts).toBe(2)
+    expect(result.status).toBe(200)
+    expect(limiter.getState().totalFailed).toBe(0)
+  })
+
+  it('returns HTTP 401 immediately when failure backoff is disabled', async () => {
     const limiter = new BufferRateLimiter({
       maxTransientRetries: 3,
-      failureBackoff: { enabled: true },
+      failureBackoff: { enabled: false },
     })
     let attempts = 0
 
@@ -273,13 +300,13 @@ describe('BufferRateLimiter', () => {
       maxRequests: 10,
       windowMs: 10_000,
       safetyMargin: 1,
-      failureBackoff: { haltBatchOnFirstFailure: true },
+      failureBackoff: { enabled: false, haltBatchOnFirstFailure: true },
     })
     let attempts = 0
 
     const first = limiter.schedule(async () => {
       attempts += 1
-      return new Response(null, { status: 401 })
+      return new Response(null, { status: 403 })
     })
     const second = limiter.schedule(async () => new Response(null, { status: 200 }))
     const third = limiter.schedule(async () => new Response(null, { status: 200 }))

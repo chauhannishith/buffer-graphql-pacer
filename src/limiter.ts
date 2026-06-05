@@ -105,7 +105,7 @@ export type BufferRateLimiterOptions = {
   maxTransientRetries?: number
   transientRetryBaseDelayMs?: number
   transientRetryMaxDelayMs?: number
-  /** Pause and retry on client failures (default: any 4xx except 401/429, GraphQL errors, exhausted 5xx). */
+  /** Pause and retry on client failures (default: any 4xx except 429, GraphQL errors, exhausted 5xx). */
   failureBackoff?: FailureBackoffOptions
   /** @deprecated Use {@link BufferRateLimiterOptions.failureBackoff}. */
   quotaExhaustionBackoff?: FailureBackoffOptions
@@ -242,7 +242,7 @@ export class BufferRateLimiter {
    * When the scheduled function returns a `Response`, the limiter:
    * - syncs pacing from `RateLimit-*` headers on success
    * - pauses and retries after HTTP 429 using `retryAfter`
-   * - pauses with exponential backoff (up to 24h) on the first hard failure (4xx except 401/429, GraphQL errors, 5xx)
+   * - pauses with exponential backoff (up to 24h) on hard failures (4xx except 429, GraphQL errors, 5xx)
    * - retries transient network errors and HTTP 5xx with exponential backoff
    */
   schedule<T>(fn: () => Promise<T>): Promise<T> {
@@ -361,12 +361,6 @@ export class BufferRateLimiter {
           this.pauseGate.pauseFor(retryAfterSeconds * 1000)
           this.callbacks.onPause?.({ pausedUntil, retryAfterSeconds })
           continue
-        }
-
-        if (result.status === 401) {
-          this.markBatchHalted()
-          this.finishHttpRequest(result.status)
-          return result
         }
 
         if (isRetryableServerResponse(result) && transientAttempts < this.maxTransientRetries) {

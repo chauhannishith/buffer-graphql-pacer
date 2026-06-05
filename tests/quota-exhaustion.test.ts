@@ -6,10 +6,10 @@ import {
 } from '../src/backoff/quota-exhaustion'
 
 describe('failure-backoff', () => {
-  it('backs off on 4xx except 401 and 429 by default', () => {
+  it('backs off on 4xx except 429 by default', () => {
     expect(shouldFailureBackoff(403)).toBe(true)
     expect(shouldFailureBackoff(402)).toBe(true)
-    expect(shouldFailureBackoff(401)).toBe(false)
+    expect(shouldFailureBackoff(401)).toBe(true)
     expect(shouldFailureBackoff(429)).toBe(false)
     expect(shouldFailureBackoff(200)).toBe(false)
   })

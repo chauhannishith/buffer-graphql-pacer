@@ -1,6 +1,6 @@
 export const FAILURE_BACKOFF_DEFAULTS = {
-  /** Never backoff-and-retry these — 401 is fail-fast, 429 uses retryAfter. */
-  excludeStatuses: [401, 429] as number[],
+  /** 429 uses retryAfter; all other 4xx (including 401) use failure backoff. */
+  excludeStatuses: [429] as number[],
   includeGraphqlErrors: true,
   /** After transient 5xx retries are exhausted. */
   includeServerErrors: true,
