@@ -1,6 +1,10 @@
 import { render, type Instance } from 'ink'
 import React from 'react'
-import { FailureBackoffExhaustedError, LimiterAbortedError, type BufferRateLimiter } from '../limiter'
+import {
+  FailureBackoffExhaustedError,
+  LimiterAbortedError,
+  type BufferRateLimiter,
+} from '../limiter'
 import { Dashboard } from './Dashboard'
 
 export type RunDashboardOptions = {
