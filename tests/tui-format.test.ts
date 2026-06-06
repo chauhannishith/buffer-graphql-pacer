@@ -6,6 +6,7 @@ import {
   formatProgressBar,
   formatHttpStatusSummary,
   formatLastHttpStatus,
+  formatLastResponseStatus,
   formatPauseReason,
   formatResetCountdown,
 } from '../src/tui/format'
@@ -34,6 +35,10 @@ describe('tui format helpers', () => {
     expect(formatLastHttpStatus(200)).toBe('200 OK')
     expect(formatLastHttpStatus(401)).toBe('401 Unauthorized')
     expect(formatLastHttpStatus(418)).toBe('418')
+    expect(formatLastResponseStatus(200, 'UNAUTHORIZED')).toBe(
+      '200 OK · GraphQL UNAUTHORIZED (check API key)',
+    )
+    expect(formatLastResponseStatus(401, null)).toBe('401 Unauthorized')
     expect(formatPauseReason('failure')).toBe('FAILURE WAIT')
     expect(formatPauseReason(null)).toBe('--')
   })

@@ -2,6 +2,7 @@ import { parseRetryAfterSeconds, PauseGate } from './backoff/retry-429'
 import {
   computeFailureBackoffMs,
   FAILURE_BACKOFF_DEFAULTS,
+  parseGraphqlErrorCode,
   responseHasGraphqlErrors,
   shouldFailureBackoff,
   type FailureBackoffOptions,
@@ -130,6 +131,8 @@ export type BufferRateLimiterState = {
   httpStatusCounts: Record<string, number>
   /** Status code from the most recent HTTP response (including retries). */
   lastHttpStatus: number | null
+  /** Buffer GraphQL `errors[0].extensions.code` when present (often on HTTP 200). */
+  lastGraphqlErrorCode: string | null
   pauseReason: PauseReason
   /** True after the first non-retryable failure; remaining jobs are skipped. */
   batchHalted: boolean
@@ -191,6 +194,7 @@ export class BufferRateLimiter {
   private totalFailed = 0
   private readonly httpStatusCounts: Record<string, number> = {}
   private lastHttpStatus: number | null = null
+  private lastGraphqlErrorCode: string | null = null
   private failureBackoffAttempt = 0
   private batchHalted = false
   private aborted = false
@@ -289,6 +293,7 @@ export class BufferRateLimiter {
       totalFailed: this.totalFailed,
       httpStatusCounts: { ...this.httpStatusCounts },
       lastHttpStatus: this.lastHttpStatus,
+      lastGraphqlErrorCode: this.lastGraphqlErrorCode,
       pauseReason: this.pauseReason,
       batchHalted: this.batchHalted,
       inFlight: this.inFlight,
@@ -358,6 +363,7 @@ export class BufferRateLimiter {
         }
 
         this.lastHttpStatus = result.status
+        this.lastGraphqlErrorCode = await parseGraphqlErrorCode(result)
 
         if (result.status === 429) {
           const retryAfterSeconds =

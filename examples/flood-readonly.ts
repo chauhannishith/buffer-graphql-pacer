@@ -20,10 +20,12 @@ import { runPacedWork } from '../src/tui/run-dashboard'
 import { buildAuthHeaders, getLiveBufferConfig } from './lib/live-env'
 
 const ORG_QUERY = `
-  query GetOrgMetaData {
-    organizations {
-      id
-      name
+  query GetOrganizations {
+    account {
+      organizations {
+        id
+        name
+      }
     }
   }
 `

@@ -3,6 +3,8 @@ export type LiveBufferConfig = {
   graphqlUrl: string
 }
 
+export const OFFICIAL_BUFFER_GRAPHQL_URL = 'https://api.buffer.com'
+
 export const requireLiveTests = (): void => {
   if (process.env.RUN_LIVE_TESTS !== '1') {
     console.error(
@@ -15,14 +17,26 @@ export const requireLiveTests = (): void => {
 export const getLiveBufferConfig = (): LiveBufferConfig => {
   requireLiveTests()
 
-  const token = process.env.BUFFER_ACCESS_TOKEN
-  const graphqlUrl = process.env.BUFFER_GRAPHQL_URL
+  const token = process.env.BUFFER_ACCESS_TOKEN?.trim()
+  const graphqlUrl = process.env.BUFFER_GRAPHQL_URL?.trim()
 
   if (!token || !graphqlUrl) {
     console.error(
       'BUFFER_ACCESS_TOKEN and BUFFER_GRAPHQL_URL must be set in .env (use pnpm example:live:* so the script loads it).',
     )
     process.exit(1)
+  }
+
+  if (graphqlUrl.includes('graph.buffer.com')) {
+    console.warn(
+      'BUFFER_GRAPHQL_URL points at graph.buffer.com (Buffer web app). API keys use https://api.buffer.com — see Buffer API docs.',
+    )
+  }
+
+  if (token.startsWith('Bearer ')) {
+    console.warn(
+      'BUFFER_ACCESS_TOKEN should be the raw key only — Authorization: Bearer is added automatically.',
+    )
   }
 
   return { token, graphqlUrl }

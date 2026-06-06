@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   computeFailureBackoffMs,
+  parseGraphqlErrorCode,
   responseHasGraphqlErrors,
   shouldFailureBackoff,
 } from '../src/backoff/quota-exhaustion'
@@ -31,6 +32,17 @@ describe('failure-backoff', () => {
 
     expect(await responseHasGraphqlErrors(failing)).toBe(true)
     expect(await responseHasGraphqlErrors(ok)).toBe(false)
+  })
+
+  it('reads GraphQL error codes from HTTP 200 responses', async () => {
+    const unauthorized = new Response(
+      JSON.stringify({
+        errors: [{ message: 'Not authorized', extensions: { code: 'UNAUTHORIZED' } }],
+      }),
+      { status: 200, headers: { 'Content-Type': 'application/json' } },
+    )
+
+    expect(await parseGraphqlErrorCode(unauthorized)).toBe('UNAUTHORIZED')
   })
 
   it('computes exponential backoff capped at 24 hours', () => {

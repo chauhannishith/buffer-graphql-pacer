@@ -71,9 +71,23 @@ export const computeFailureBackoffMs = (
 /** @deprecated Alias for {@link computeFailureBackoffMs}. */
 export const computeQuotaBackoffMs = computeFailureBackoffMs
 
+type GraphqlErrorBody = {
+  errors?: Array<{ extensions?: { code?: string } }>
+}
+
+export const parseGraphqlErrorCode = async (response: Response): Promise<string | null> => {
+  try {
+    const body = (await response.clone().json()) as GraphqlErrorBody
+    const code = body.errors?.[0]?.extensions?.code
+    return typeof code === 'string' ? code : null
+  } catch {
+    return null
+  }
+}
+
 export const responseHasGraphqlErrors = async (response: Response): Promise<boolean> => {
   try {
-    const body = (await response.clone().json()) as { errors?: unknown[] }
+    const body = (await response.clone().json()) as GraphqlErrorBody
     return Array.isArray(body.errors) && body.errors.length > 0
   } catch {
     return false

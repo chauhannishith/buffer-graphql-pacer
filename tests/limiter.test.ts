@@ -291,6 +291,25 @@ describe('BufferRateLimiter', () => {
     expect(limiter.getState().lastHttpStatus).toBe(200)
   })
 
+  it('tracks lastGraphqlErrorCode from HTTP 200 GraphQL errors', async () => {
+    const limiter = new BufferRateLimiter({
+      failureBackoff: { baseDelayMs: 30_000, maxDelayMs: 30_000 },
+    })
+
+    void limiter.schedule(async () => {
+      return new Response(
+        JSON.stringify({
+          errors: [{ message: 'Not authorized', extensions: { code: 'UNAUTHORIZED' } }],
+        }),
+        { status: 200, headers: { 'Content-Type': 'application/json' } },
+      )
+    })
+
+    await vi.advanceTimersByTimeAsync(0)
+    expect(limiter.getState().lastHttpStatus).toBe(200)
+    expect(limiter.getState().lastGraphqlErrorCode).toBe('UNAUTHORIZED')
+  })
+
   it('blocks the queue while backing off on the first failure', async () => {
     const limiter = new BufferRateLimiter({
       maxRequests: 10,
