@@ -60,6 +60,40 @@ export const formatLastHttpStatus = (status: number | null): string => {
   return label ? `${status} ${label}` : `${status}`
 }
 
+const GRAPHQL_ERROR_HINTS: Record<string, string> = {
+  UNAUTHORIZED: 'check API key',
+  FORBIDDEN: 'no permission',
+  NOT_FOUND: 'wrong resource or URL',
+  RATE_LIMIT_EXCEEDED: 'wait and retry',
+}
+
+/** Combine HTTP status with Buffer GraphQL error code when the body has one. */
+export const formatLastResponseStatus = (
+  httpStatus: number | null,
+  graphqlErrorCode: string | null,
+): string => {
+  if (httpStatus === null) {
+    return '--'
+  }
+
+  const httpLabel = formatLastHttpStatus(httpStatus)
+
+  if (graphqlErrorCode === null) {
+    return httpLabel
+  }
+
+  const hint = GRAPHQL_ERROR_HINTS[graphqlErrorCode]
+  const graphqlLabel = hint
+    ? `GraphQL ${graphqlErrorCode} (${hint})`
+    : `GraphQL ${graphqlErrorCode}`
+
+  if (httpStatus >= 200 && httpStatus < 300) {
+    return `${httpLabel} · ${graphqlLabel}`
+  }
+
+  return `${httpLabel} · ${graphqlLabel}`
+}
+
 export const formatPauseReason = (reason: string | null): string => {
   if (reason === 'failure') {
     return 'FAILURE WAIT'
